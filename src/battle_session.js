@@ -3,7 +3,7 @@ import { splitFrame, parseLine, parseIdent, formatBattleLine } from "./protocol.
 import { renderHome, renderBattle, renderError } from "./html.js";
 
 // Real Pokemon Showdown server, per PROTOCOL.md.
-const SHOWDOWN_WS_URL = "wss://sim3.psim.us/showdown/websocket";
+const SHOWDOWN_WS_URL = "https://sim3.psim.us/showdown/websocket";
 
 const DEFAULT_STATE = {
   connected: false,
