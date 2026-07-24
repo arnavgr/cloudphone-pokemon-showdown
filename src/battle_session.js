@@ -46,15 +46,21 @@ export class BattleSession extends DurableObject {
     }
   }
 
-  // Lazily open (or re-open) the WebSocket to the real Showdown server.
-  // Uses the Hibernatable WebSockets API so the connection can survive
-  // the Durable Object being evicted between infrequent phone requests.
+  // Lazily open (or re-open) the outbound WebSocket to the real Showdown
+  // server. This is a *client* connection the DO initiates via fetch(),
+  // not a connection accepted from an incoming request -- so it does NOT
+  // use the Hibernatable WebSockets API (ctx.acceptWebSocket only applies
+  // to sockets a DO accepts from an Upgrade request it receives; outbound
+  // sockets aren't hibernatable yet -- see cloudflare/workerd#4864).
+  // Practically: this DO stays pinned in memory (billed) while this socket
+  // is open, and gets evicted -- closing the socket -- after ~70-140s with
+  // no incoming HTTP request. A page left idle that long will need to
+  // reconnect / re-search on the next tap.
   async ensureConnected() {
-    const existing = this.ctx.getWebSockets()[0];
-    if (existing) {
-      this.ws = existing;
+    if (this.ws && this.ws.readyState === 1 /* OPEN */) {
       return;
     }
+
     const resp = await fetch(SHOWDOWN_WS_URL, {
       headers: { Upgrade: "websocket" },
     });
@@ -62,7 +68,18 @@ export class BattleSession extends DurableObject {
     if (!ws) {
       throw new Error("Showdown server did not accept the WebSocket upgrade");
     }
-    this.ctx.acceptWebSocket(ws);
+
+    ws.accept();
+    ws.addEventListener("message", (event) => {
+      this.ctx.waitUntil(this.onSocketMessage(event.data));
+    });
+    ws.addEventListener("close", (event) => {
+      this.ctx.waitUntil(this.onSocketClose(event));
+    });
+    ws.addEventListener("error", () => {
+      this.ctx.waitUntil(this.onSocketError());
+    });
+
     this.ws = ws;
     this.state_.connected = true;
     await this.save();
@@ -77,9 +94,11 @@ export class BattleSession extends DurableObject {
     this.send(`${roomId || ""}|${text}`);
   }
 
-  // ---- Hibernation API callbacks (invoked by the runtime) ----
+  // ---- Outbound WebSocket event handlers ----
+  // (plain event listeners, since this socket isn't hibernatable -- see
+  // the note on ensureConnected above)
 
-  async webSocketMessage(ws, message) {
+  async onSocketMessage(message) {
     const text = typeof message === "string" ? message : new TextDecoder().decode(message);
     const { roomId, lines } = splitFrame(text);
     for (const rawLine of lines) {
@@ -88,13 +107,15 @@ export class BattleSession extends DurableObject {
     await this.save();
   }
 
-  async webSocketClose(ws, code, reason, wasClean) {
+  async onSocketClose(event) {
+    this.ws = null;
     this.state_.connected = false;
-    this.pushLog(`(disconnected from server: ${reason || code})`);
+    this.pushLog(`(disconnected from server: ${event.reason || event.code})`);
     await this.save();
   }
 
-  async webSocketError(ws, error) {
+  async onSocketError() {
+    this.ws = null;
     this.state_.connected = false;
     this.pushLog(`(connection error)`);
     await this.save();
