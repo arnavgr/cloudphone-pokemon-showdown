@@ -1,0 +1,1 @@
+Add deletion tombstone for BattleSession Durable Object to wrangler.toml migration
