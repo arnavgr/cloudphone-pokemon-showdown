@@ -576,6 +576,20 @@ export default {
     if (url.pathname === '/config/config.js') {
       let text = await response.text();
       text = text.replace(/\bsim\d*\.psim\.us\b/g, proxyHostname);
+
+      // text.replace() almost never preserves byte length, so the
+      // Content-Length we inherited from the *unmodified* upstream response
+      // is now wrong. Sending a stale Content-Length alongside a body of a
+      // different length triggers a hard client-side failure
+      // (net::ERR_CONTENT_LENGTH_MISMATCH) with no JS-level error to show
+      // for it — the script just silently fails to load, Config.defaultserver
+      // never gets set, and the client hangs forever with nowhere to connect.
+      // Content-Encoding is stale for the same reason: fetch() already
+      // transparently decoded the body for us, but the header claiming it's
+      // still gzip/br survives unless we drop it too.
+      respHeaders.delete('Content-Length');
+      respHeaders.delete('Content-Encoding');
+
       return new Response(text, {
         status: response.status,
         statusText: response.statusText,
