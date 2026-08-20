@@ -1,6 +1,6 @@
 import express from "express";
 import http from "http";
-import { createProxyMiddleware } from "http-proxy-middleware";
+import httpProxy from "http-proxy";
 import { HttpsProxyAgent } from "https-proxy-agent";
 
 const app = express();
@@ -9,15 +9,62 @@ app.set("trust proxy", 1);
 const TARGET_WEB = "https://play.pokemonshowdown.com";
 const TARGET_SIM = "https://sim3.psim.us";
 
-// Optional outbound proxy routing (e.g. Webshare Warsaw proxy)
 const PROXY_URL = process.env.PROXY_URL;
 const proxyAgent = PROXY_URL ? new HttpsProxyAgent(PROXY_URL) : undefined;
+
+// Create dedicated proxy instances
+const webProxy = httpProxy.createProxyServer({
+  target: TARGET_WEB,
+  changeOrigin: true,
+  agent: proxyAgent,
+  secure: true,
+});
+
+const simProxy = httpProxy.createProxyServer({
+  target: TARGET_SIM,
+  changeOrigin: true,
+  agent: proxyAgent,
+  secure: true,
+  ws: true,
+});
+
+// Clean security and cookie headers from upstream responses
+function sanitizeHeaders(proxyRes) {
+  delete proxyRes.headers["content-security-policy"];
+  delete proxyRes.headers["content-security-policy-report-only"];
+  delete proxyRes.headers["x-frame-options"];
+  delete proxyRes.headers["cross-origin-opener-policy"];
+  delete proxyRes.headers["cross-origin-embedder-policy"];
+  proxyRes.headers["access-control-allow-origin"] = "*";
+
+  const setCookie = proxyRes.headers["set-cookie"];
+  if (setCookie) {
+    proxyRes.headers["set-cookie"] = (
+      Array.isArray(setCookie) ? setCookie : [setCookie]
+    ).map((cookie) => cookie.replace(/;\s*Domain=[^;]+/i, ""));
+  }
+}
+
+webProxy.on("proxyRes", sanitizeHeaders);
+simProxy.on("proxyRes", sanitizeHeaders);
+
+// Error handlers to prevent server crashes on socket resets
+webProxy.on("error", (err, req, res) => {
+  if (res && res.writeHead) {
+    res.writeHead(502, { "Content-Type": "text/plain" });
+    res.end("Web proxy connection error.");
+  }
+});
+
+simProxy.on("error", (err, req, socket) => {
+  if (socket && socket.destroy) {
+    socket.destroy();
+  }
+});
 
 // ---------------------------------------------------------------------------
 // 1. Dynamic Config Interception
 // ---------------------------------------------------------------------------
-// Forces the Showdown client to route its WebSocket to this proxy instead
-// of trying to connect cross-origin directly to sim3.psim.us
 app.get("/config/config.js", async (req, res) => {
   try {
     const fetchOptions = {
@@ -43,80 +90,52 @@ app.get("/config/config.js", async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// 2. Simulator WebSocket & SockJS Proxy (/showdown/*)
+// 2. HTTP Route Dispatcher
 // ---------------------------------------------------------------------------
-const simProxy = createProxyMiddleware({
-  target: TARGET_SIM,
-  changeOrigin: true,
-  ws: true,
-  agent: proxyAgent,
-  headers: {
-    Host: "sim3.psim.us",
-    Origin: TARGET_WEB,
-    Referer: `${TARGET_WEB}/`,
-  },
-  on: {
-    proxyRes: (proxyRes) => {
-      delete proxyRes.headers["content-security-policy"];
-      delete proxyRes.headers["x-frame-options"];
-    },
-    error: (err, req, res) => {
-      if (res && res.writeHead) {
-        res.writeHead(502, { "Content-Type": "text/plain" });
-        res.end("Simulator proxy error.");
-      }
-    },
-  },
+app.use((req, res) => {
+  if (req.url.startsWith("/showdown")) {
+    simProxy.web(req, res, {
+      headers: {
+        Host: "sim3.psim.us",
+        Origin: TARGET_WEB,
+        Referer: `${TARGET_WEB}/`,
+      },
+    });
+  } else {
+    webProxy.web(req, res, {
+      headers: {
+        Host: "play.pokemonshowdown.com",
+        Origin: TARGET_WEB,
+        Referer: `${TARGET_WEB}/`,
+      },
+    });
+  }
 });
 
-app.use("/showdown", simProxy);
-
 // ---------------------------------------------------------------------------
-// 3. Web Client Asset & Page Proxy (/*)
-// ---------------------------------------------------------------------------
-const webProxy = createProxyMiddleware({
-  target: TARGET_WEB,
-  changeOrigin: true,
-  agent: proxyAgent,
-  headers: {
-    Host: "play.pokemonshowdown.com",
-    Origin: TARGET_WEB,
-    Referer: `${TARGET_WEB}/`,
-  },
-  on: {
-    proxyRes: (proxyRes) => {
-      // Strip CSP and framing blockers
-      delete proxyRes.headers["content-security-policy"];
-      delete proxyRes.headers["content-security-policy-report-only"];
-      delete proxyRes.headers["x-frame-options"];
-      delete proxyRes.headers["cross-origin-opener-policy"];
-      delete proxyRes.headers["cross-origin-embedder-policy"];
-
-      // Strip domain from cookies so they stick to your Render domain
-      const setCookie = proxyRes.headers["set-cookie"];
-      if (setCookie) {
-        proxyRes.headers["set-cookie"] = (
-          Array.isArray(setCookie) ? setCookie : [setCookie]
-        ).map((cookie) => cookie.replace(/;\s*Domain=[^;]+/i, ""));
-      }
-    },
-    error: (err, req, res) => {
-      if (res && res.writeHead) {
-        res.writeHead(502, { "Content-Type": "text/plain" });
-        res.end("Web proxy error.");
-      }
-    },
-  },
-});
-
-app.use("/", webProxy);
-
-// ---------------------------------------------------------------------------
-// Server Initialization
+// 3. Native WebSocket Upgrade Listener
 // ---------------------------------------------------------------------------
 const server = http.createServer(app);
-const PORT = process.env.PORT || 3000;
 
+server.on("upgrade", (req, socket, head) => {
+  if (req.url.startsWith("/showdown")) {
+    simProxy.ws(req, socket, head, {
+      headers: {
+        Host: "sim3.psim.us",
+        Origin: TARGET_WEB,
+      },
+    });
+  } else {
+    webProxy.ws(req, socket, head, {
+      headers: {
+        Host: "play.pokemonshowdown.com",
+        Origin: TARGET_WEB,
+      },
+    });
+  }
+});
+
+const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`Showdown proxy active on port ${PORT}`);
 });
