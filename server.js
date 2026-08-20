@@ -28,7 +28,7 @@ const simProxy = httpProxy.createProxyServer({
   ws: true,
 });
 
-// Request uncompressed plaintext from upstream
+// Force upstream to send uncompressed plaintext so body rewrites don't corrupt
 webProxy.on("proxyReq", (proxyReq) => {
   proxyReq.setHeader("accept-encoding", "identity");
 });
@@ -66,61 +66,53 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       text = text.split("//play.pokemonshowdown.com/config/config.js")
                  .join(`//${currentHost}/config/config.js`);
 
-      // Top-of-page D-pad button & instant trigger
-      const topButtonHtml = `
-<div id="proxy-connect-bar" style="position:fixed;top:0;left:0;width:100%;z-index:999999;background:#111;padding:4px;text-align:center;border-bottom:2px solid #ffd700;">
-  <button id="proxy-connect-btn" tabindex="1" onclick="window.triggerShowdownConnect()" style="width:96%;height:32px;background:#0088cc;color:#fff;font-weight:bold;font-size:12px;border:2px solid #fff;border-radius:4px;cursor:pointer;">
-    ⚡ CONNECT / WAKE WEBSOCKET
-  </button>
-</div>
-
+      // Invisible, zero-UI boot script: polls silently and connects instantly
+      const injected = `
 <script>
-window.triggerShowdownConnect = function() {
-  var btn = document.getElementById('proxy-connect-btn');
-  if (btn) btn.innerText = "CONNECTING...";
-  
+(function() {
   try {
-    window.Config = window.Config || {};
-    Config.server = Config.defaultserver = {
-      id: 'showdown',
-      host: 'sim3.psim.us',
-      port: 443,
-      httpport: 8000,
-      altport: 80,
-      ssl: true
-    };
-    try { window.localStorage.setItem('showdown_crossteams', 'false'); } catch (e) {}
-    
-    if (window.app && typeof app.connect === 'function') {
-      app.connect();
-    }
-  } catch (err) {
-    if (btn) btn.innerText = "RETRY CONNECT";
-    console.error("Connect failed:", err);
-  }
-};
+    window.localStorage.setItem('showdown_crossteams', 'false');
+  } catch (e) {}
 
-// Monitor connection state and hide button once connected
-setInterval(function() {
-  if (window.app && app.connection && app.connection.open) {
-    var bar = document.getElementById('proxy-connect-bar');
-    if (bar) bar.style.display = 'none';
-  }
-}, 300);
-
-// Auto-trigger without waiting for load event
-setTimeout(function() {
-  window.triggerShowdownConnect();
-}, 600);
-</script>
-`;
-
-      // Inject directly after opening <body> so it takes index 1 on D-Pad focus
-      if (text.includes("<body")) {
-        text = text.replace(/<body[^>]*>/i, (match) => `${match}${topButtonHtml}`);
-      } else {
-        text = topButtonHtml + text;
+  function attemptConnect() {
+    try {
+      window.Config = window.Config || {};
+      Config.server = Config.defaultserver = {
+        id: 'showdown',
+        host: 'sim3.psim.us',
+        port: 443,
+        httpport: 8000,
+        altport: 80,
+        ssl: true
+      };
+      if (window.app && typeof app.connect === 'function') {
+        if (!app.connection) {
+          app.connect();
+        }
+        return true;
       }
+    } catch (err) {}
+    return false;
+  }
+
+  // Poll every 50ms so it connects immediately when app is ready (no waiting on window.onload)
+  var pollCount = 0;
+  var connectInterval = setInterval(function() {
+    pollCount++;
+    if (attemptConnect() || pollCount > 200) {
+      clearInterval(connectInterval);
+    }
+  }, 50);
+
+  window.addEventListener('load', function() {
+    setTimeout(attemptConnect, 100);
+  });
+})();
+</script>`;
+
+      text = text.includes("</body>")
+        ? text.replace("</body>", `${injected}</body>`)
+        : text + injected;
 
       body = Buffer.from(text, "utf8");
       proxyRes.headers["content-length"] = Buffer.byteLength(body);
@@ -146,7 +138,16 @@ simProxy.on("error", (err, req, socket) => {
 });
 
 // ---------------------------------------------------------------------------
-// 1. Dynamic Config Interception
+// 1. Short-Circuit Trackers & Dead Analytics Requests
+// ---------------------------------------------------------------------------
+app.get(/(analytics\.js|gtag\/js|ga\.js)/, (req, res) => {
+  res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+  res.setHeader("Cache-Control", "public, max-age=86400");
+  return res.send("// Analytics disabled");
+});
+
+// ---------------------------------------------------------------------------
+// 2. Dynamic Config Interception
 // ---------------------------------------------------------------------------
 app.get("/config/config.js", async (req, res) => {
   try {
@@ -182,7 +183,7 @@ Config.server = Config.defaultserver = {
 });
 
 // ---------------------------------------------------------------------------
-// 2. Route Dispatcher
+// 3. Route Dispatcher
 // ---------------------------------------------------------------------------
 app.use((req, res) => {
   if (req.url.startsWith("/showdown")) {
@@ -205,7 +206,7 @@ app.use((req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// 3. Native WebSocket Upgrade Listener
+// 4. Native WebSocket Upgrade Listener
 // ---------------------------------------------------------------------------
 const server = http.createServer(app);
 
