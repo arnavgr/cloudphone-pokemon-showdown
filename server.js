@@ -1,6 +1,7 @@
 import express from "express";
 import http from "http";
 import httpProxy from "http-proxy";
+import { HttpsProxyAgent } from "https-proxy-agent";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -8,26 +9,37 @@ app.set("trust proxy", 1);
 const TARGET_WEB = "https://play.pokemonshowdown.com";
 const TARGET_SIM = "https://sim3.psim.us";
 
+const PROXY_URL = process.env.PROXY_URL;
+const proxyAgent = PROXY_URL ? new HttpsProxyAgent(PROXY_URL) : undefined;
+
 const webProxy = httpProxy.createProxyServer({
   target: TARGET_WEB,
   changeOrigin: true,
+  agent: proxyAgent,
   secure: true,
+  selfHandleResponse: true,
 });
 
 const simProxy = httpProxy.createProxyServer({
   target: TARGET_SIM,
   changeOrigin: true,
+  agent: proxyAgent,
   secure: true,
   ws: true,
 });
 
-// Strip CSP and cross-origin locks
+// Force upstream to send uncompressed plaintext so body rewrites don't corrupt
+webProxy.on("proxyReq", (proxyReq) => {
+  proxyReq.setHeader("accept-encoding", "identity");
+});
+
 function sanitizeHeaders(proxyRes) {
   delete proxyRes.headers["content-security-policy"];
   delete proxyRes.headers["content-security-policy-report-only"];
   delete proxyRes.headers["x-frame-options"];
   delete proxyRes.headers["cross-origin-opener-policy"];
   delete proxyRes.headers["cross-origin-embedder-policy"];
+  delete proxyRes.headers["content-encoding"];
   proxyRes.headers["access-control-allow-origin"] = "*";
 
   const setCookie = proxyRes.headers["set-cookie"];
@@ -39,114 +51,113 @@ function sanitizeHeaders(proxyRes) {
 }
 
 webProxy.on("proxyRes", sanitizeHeaders);
-simProxy.on("proxyRes", sanitizeHeaders);
+
+webProxy.on("proxyRes", (proxyRes, req, res) => {
+  const chunks = [];
+  proxyRes.on("data", (chunk) => chunks.push(chunk));
+  proxyRes.on("end", () => {
+    let body = Buffer.concat(chunks);
+    const contentType = proxyRes.headers["content-type"] || "";
+
+    if (contentType.includes("text/html")) {
+      const currentHost = req.headers.host;
+      let text = body.toString("utf8");
+
+      text = text.split("//play.pokemonshowdown.com/config/config.js")
+                 .join(`//${currentHost}/config/config.js`);
+
+      // Injects server definition AND kicks connection inside the onload callback
+      const injected = `
+<script>
+window.addEventListener('load', function () {
+  setTimeout(function () {
+    try {
+      window.Config = window.Config || {};
+      Config.server = Config.defaultserver = {
+        id: 'showdown',
+        host: 'sim3.psim.us',
+        port: 443,
+        httpport: 8000,
+        altport: 80,
+        ssl: true
+      };
+      if (window.app && typeof app.connect === 'function') {
+        if (!app.connection) {
+          app.connect();
+        }
+      }
+    } catch (e) {
+      console.error('Proxy auto-connect failed:', e);
+    }
+  }, 300);
+});
+</script>`;
+
+      text = text.includes("</body>")
+        ? text.replace("</body>", `${injected}</body>`)
+        : text + injected;
+
+      body = Buffer.from(text, "utf8");
+      proxyRes.headers["content-length"] = Buffer.byteLength(body);
+      delete proxyRes.headers["content-encoding"];
+    }
+
+    res.writeHead(proxyRes.statusCode, proxyRes.headers);
+    res.end(body);
+  });
+});
 
 webProxy.on("error", (err, req, res) => {
   if (res && res.writeHead) {
     res.writeHead(502, { "Content-Type": "text/plain" });
-    res.end("Web proxy communication error.");
+    res.end("Web proxy connection error.");
   }
 });
 
 simProxy.on("error", (err, req, socket) => {
-  if (socket && socket.destroy) socket.destroy();
+  if (socket && socket.destroy) {
+    socket.destroy();
+  }
 });
 
-// The indestructible boot & connection payload
-const BOOT_PAYLOAD = `
-<script>
-  (function() {
-    var serverObj = {
-      id: 'showdown',
-      host: 'sim3.psim.us',
-      port: 443,
-      httpport: 8000,
-      altport: 80,
-      ssl: true
+// ---------------------------------------------------------------------------
+// 1. Dynamic Config Interception
+// ---------------------------------------------------------------------------
+app.get("/config/config.js", async (req, res) => {
+  try {
+    const fetchOptions = {
+      headers: {
+        "User-Agent": req.headers["user-agent"] || "Mozilla/5.0",
+        Referer: `${TARGET_WEB}/`,
+        Origin: TARGET_WEB,
+        "Accept-Encoding": "identity",
+      },
     };
 
-    window.Config = window.Config || {};
+    const response = await fetch(`${TARGET_WEB}/config/config.js`, fetchOptions);
+    let text = await response.text();
 
-    // Lock Config.server so client.js cannot wipe it to null
-    try {
-      Object.defineProperty(window.Config, 'server', {
-        get: function() { return serverObj; },
-        set: function() {},
-        configurable: true,
-        enumerable: true
-      });
-      Object.defineProperty(window.Config, 'defaultserver', {
-        get: function() { return serverObj; },
-        set: function() {},
-        configurable: true,
-        enumerable: true
-      });
-      window.localStorage.setItem('showdown_crossteams', 'false');
-    } catch (e) {}
-
-    // Auto-connect loop: fires the millisecond app is ready
-    var connectInterval = setInterval(function() {
-      if (window.app && typeof window.app.connect === 'function') {
-        if (!window.app.connection) {
-          window.app.connect();
-        }
-        clearInterval(connectInterval);
-      }
-    }, 50);
-  })();
-</script>
+    text += `
+Config.server = Config.defaultserver = {
+  id: 'showdown',
+  host: 'sim3.psim.us',
+  port: 443,
+  httpport: 8000,
+  altport: 80,
+  ssl: true
+};
 `;
 
-// ---------------------------------------------------------------------------
-// 1. Intercept Root HTML (Native Fetch Auto-Decompresses Gzip Cleanly)
-// ---------------------------------------------------------------------------
-app.get(["/", "/index.html"], async (req, res) => {
-  try {
-    const upstream = await fetch(`${TARGET_WEB}/`, {
-      headers: {
-        "User-Agent": req.headers["user-agent"] || "Mozilla/5.0",
-        Referer: `${TARGET_WEB}/`,
-        Origin: TARGET_WEB,
-      },
-    });
-
-    let html = await upstream.text();
-    html = html.replace("<head>", `<head>${BOOT_PAYLOAD}`);
-
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
-    return res.send(html);
-  } catch (err) {
-    return res.status(500).send(`HTML proxy error: ${err.message}`);
-  }
-});
-
-// ---------------------------------------------------------------------------
-// 2. Intercept Config File (Backup Property Lock)
-// ---------------------------------------------------------------------------
-app.get(["/config/config.js", "/config/config.js*"], async (req, res) => {
-  try {
-    const upstream = await fetch(`${TARGET_WEB}${req.originalUrl}`, {
-      headers: {
-        "User-Agent": req.headers["user-agent"] || "Mozilla/5.0",
-        Referer: `${TARGET_WEB}/`,
-        Origin: TARGET_WEB,
-      },
-    });
-
-    let text = await upstream.text();
-    text += `\n${BOOT_PAYLOAD.replace(/<\/?script>/g, "")}\n`;
-
     res.setHeader("Content-Type", "application/javascript; charset=utf-8");
-    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+    res.setHeader("Cache-Control", "no-store");
     return res.send(text);
   } catch (err) {
-    return res.status(500).send(`Config proxy error: ${err.message}`);
+    return res.status(500).send(`// Config proxy error: ${err.message}`);
   }
 });
 
 // ---------------------------------------------------------------------------
-// 3. Transparent Asset & Simulator Routing
+// 2. Route Dispatcher
 // ---------------------------------------------------------------------------
 app.use((req, res) => {
   if (req.url.startsWith("/showdown")) {
@@ -169,7 +180,7 @@ app.use((req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. WebSocket Upgrade Pipeline
+// 3. Native WebSocket Upgrade Listener
 // ---------------------------------------------------------------------------
 const server = http.createServer(app);
 
@@ -193,5 +204,5 @@ server.on("upgrade", (req, socket, head) => {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`Showdown reverse proxy listening on port ${PORT}`);
+  console.log(`Showdown proxy active on port ${PORT}`);
 });
