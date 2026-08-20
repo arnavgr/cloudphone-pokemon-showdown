@@ -28,7 +28,7 @@ const simProxy = httpProxy.createProxyServer({
   ws: true,
 });
 
-// Force upstream to send uncompressed plaintext so body rewrites don't corrupt
+// Force uncompressed HTML so we can rewrite text without decoding crashes
 webProxy.on("proxyReq", (proxyReq) => {
   proxyReq.setHeader("accept-encoding", "identity");
 });
@@ -52,6 +52,48 @@ function sanitizeHeaders(proxyRes) {
 
 webProxy.on("proxyRes", sanitizeHeaders);
 
+// IMMEDIATE HEAD INJECTION: Runs before client.js to kill crossteams & auto-connect
+const INSTANT_BOOT_SCRIPT = `
+<script>
+(function() {
+  // 1. Immediately disable crossteams iframe so window never stalls
+  try {
+    window.localStorage.setItem('showdown_crossteams', 'false');
+  } catch (e) {}
+
+  var serverObj = {
+    id: 'showdown',
+    host: 'sim3.psim.us',
+    port: 443,
+    httpport: 8000,
+    altport: 80,
+    ssl: true
+  };
+
+  window.Config = window.Config || {};
+  Config.server = Config.defaultserver = serverObj;
+
+  // 2. Poll every 50ms and connect immediately when app is ready (NO onload waiting)
+  var pollCount = 0;
+  var connectInterval = setInterval(function() {
+    pollCount++;
+    if (window.Config) {
+      Config.server = Config.defaultserver = serverObj;
+    }
+    if (window.app && typeof app.connect === 'function') {
+      if (!app.connection) {
+        app.connect();
+      }
+      clearInterval(connectInterval);
+    }
+    if (pollCount > 200) { // Safety clear after 10s
+      clearInterval(connectInterval);
+    }
+  }, 50);
+})();
+</script>
+`;
+
 webProxy.on("proxyRes", (proxyRes, req, res) => {
   const chunks = [];
   proxyRes.on("data", (chunk) => chunks.push(chunk));
@@ -60,42 +102,10 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     const contentType = proxyRes.headers["content-type"] || "";
 
     if (contentType.includes("text/html")) {
-      const currentHost = req.headers.host;
       let text = body.toString("utf8");
 
-      text = text.split("//play.pokemonshowdown.com/config/config.js")
-                 .join(`//${currentHost}/config/config.js`);
-
-      // Injects server definition AND kicks connection inside the onload callback
-      const injected = `
-<script>
-window.addEventListener('load', function () {
-  setTimeout(function () {
-    try {
-      window.Config = window.Config || {};
-      Config.server = Config.defaultserver = {
-        id: 'showdown',
-        host: 'sim3.psim.us',
-        port: 443,
-        httpport: 8000,
-        altport: 80,
-        ssl: true
-      };
-      if (window.app && typeof app.connect === 'function') {
-        if (!app.connection) {
-          app.connect();
-        }
-      }
-    } catch (e) {
-      console.error('Proxy auto-connect failed:', e);
-    }
-  }, 300);
-});
-</script>`;
-
-      text = text.includes("</body>")
-        ? text.replace("</body>", `${injected}</body>`)
-        : text + injected;
+      // Inject script at the very top of <head> before any external JS files load
+      text = text.replace("<head>", `<head>${INSTANT_BOOT_SCRIPT}`);
 
       body = Buffer.from(text, "utf8");
       proxyRes.headers["content-length"] = Buffer.byteLength(body);
@@ -110,54 +120,16 @@ window.addEventListener('load', function () {
 webProxy.on("error", (err, req, res) => {
   if (res && res.writeHead) {
     res.writeHead(502, { "Content-Type": "text/plain" });
-    res.end("Web proxy connection error.");
+    res.end("Web proxy communication error.");
   }
 });
 
 simProxy.on("error", (err, req, socket) => {
-  if (socket && socket.destroy) {
-    socket.destroy();
-  }
+  if (socket && socket.destroy) socket.destroy();
 });
 
 // ---------------------------------------------------------------------------
-// 1. Dynamic Config Interception
-// ---------------------------------------------------------------------------
-app.get("/config/config.js", async (req, res) => {
-  try {
-    const fetchOptions = {
-      headers: {
-        "User-Agent": req.headers["user-agent"] || "Mozilla/5.0",
-        Referer: `${TARGET_WEB}/`,
-        Origin: TARGET_WEB,
-        "Accept-Encoding": "identity",
-      },
-    };
-
-    const response = await fetch(`${TARGET_WEB}/config/config.js`, fetchOptions);
-    let text = await response.text();
-
-    text += `
-Config.server = Config.defaultserver = {
-  id: 'showdown',
-  host: 'sim3.psim.us',
-  port: 443,
-  httpport: 8000,
-  altport: 80,
-  ssl: true
-};
-`;
-
-    res.setHeader("Content-Type", "application/javascript; charset=utf-8");
-    res.setHeader("Cache-Control", "no-store");
-    return res.send(text);
-  } catch (err) {
-    return res.status(500).send(`// Config proxy error: ${err.message}`);
-  }
-});
-
-// ---------------------------------------------------------------------------
-// 2. Route Dispatcher
+// Route Dispatcher & WebSocket Handling
 // ---------------------------------------------------------------------------
 app.use((req, res) => {
   if (req.url.startsWith("/showdown")) {
@@ -179,9 +151,6 @@ app.use((req, res) => {
   }
 });
 
-// ---------------------------------------------------------------------------
-// 3. Native WebSocket Upgrade Listener
-// ---------------------------------------------------------------------------
 const server = http.createServer(app);
 
 server.on("upgrade", (req, socket, head) => {
@@ -204,5 +173,5 @@ server.on("upgrade", (req, socket, head) => {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`Showdown proxy active on port ${PORT}`);
+  console.log(`Showdown proxy running on port ${PORT}`);
 });
