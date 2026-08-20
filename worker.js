@@ -11,7 +11,7 @@
  * ============================================================================
  */
 
-const TARGET_HOST = 'play.pokemonshowdown.com';
+const TARGET_HOST = 'pokemonshowdown.com';
 const TARGET_ORIGIN = `https://${TARGET_HOST}`;
 
 // ─── Scale Constants ──────────────────────────────────────────────────────────
