@@ -70,6 +70,15 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       const injected = `
 <script>
 (function() {
+  // Prevent D-pad left/right from navigating away from battle
+  window.addEventListener('keydown', function(e) {
+    if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') &&
+        (window.location.hash.includes('battle') || document.querySelector('.battle-room'))) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+  }, true);
+
   try {
     window.localStorage.setItem('showdown_crossteams', 'false');
   } catch (e) {}
