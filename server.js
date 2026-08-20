@@ -32,8 +32,13 @@ const INJECTED_BOOT = `
 </script>
 `;
 
+// Request uncompressed plaintext from upstream to allow body injection
+webProxy.on("proxyReq", (proxyReq) => {
+  proxyReq.setHeader("accept-encoding", "identity");
+});
+
 // ---------------------------------------------------------------------------
-// 1. Force Clean Config Route (Bypasses Browser Disk Cache)
+// 1. Force Clean Config Route
 // ---------------------------------------------------------------------------
 app.get("/config/config.js", async (req, res) => {
   try {
@@ -42,6 +47,7 @@ app.get("/config/config.js", async (req, res) => {
         "User-Agent": req.headers["user-agent"] || "Mozilla/5.0",
         Referer: `${TARGET_WEB}/`,
         Origin: TARGET_WEB,
+        "Accept-Encoding": "identity",
       },
     });
 
@@ -67,6 +73,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
   delete proxyRes.headers["x-frame-options"];
   delete proxyRes.headers["cross-origin-opener-policy"];
   delete proxyRes.headers["cross-origin-embedder-policy"];
+  delete proxyRes.headers["content-encoding"];
   proxyRes.headers["access-control-allow-origin"] = "*";
 
   const setCookie = proxyRes.headers["set-cookie"];
@@ -79,7 +86,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
   const contentType = proxyRes.headers["content-type"] || "";
 
   if (contentType.includes("text/html")) {
-    let body = [];
+    const body = [];
     proxyRes.on("data", (chunk) => body.push(chunk));
     proxyRes.on("end", () => {
       let html = Buffer.concat(body).toString("utf8");
