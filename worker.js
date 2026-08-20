@@ -1,51 +1,23 @@
 /**
  * ============================================================================
- * POKÉMON SHOWDOWN — QVGA FEATURE PHONE PROXY
+ * POKÉMON SHOWDOWN — QVGA FEATURE PHONE PROXY (DIRECT WS MODE)
  * ============================================================================
- * Cloudflare Worker: Transparent reverse proxy for play.pokemonshowdown.com
+ * Cloudflare Worker: Asset & layout proxy for play.pokemonshowdown.com
  * Target: CloudMosa CloudPhone on 240×320 QVGA displays (D-Pad only input)
  *
  * Architecture:
- *   Browser (240×320) → Cloudflare Worker → play.pokemonshowdown.com (site)
- *                                          → <sim host>              (battles)
- *
- * WHY THIS VERSION IS DIFFERENT FROM THE ORIGINAL:
- *   The Showdown client does not open its battle WebSocket to
- *   play.pokemonshowdown.com. It reads a hardcoded sim server host
- *   (e.g. "sim3.psim.us") out of /config/config.js and connects there
- *   directly, cross-origin, bypassing this Worker entirely.
- *
- *   If CloudPhone's remote-rendering layer doesn't reliably complete a
- *   second WebSocket to a domain the page never HTTP-fetched from, the
- *   client hangs on "Loading...". This version rewrites config.js so the
- *   sim host becomes *this Worker's own origin*, and proxies /showdown/*
- *   traffic (including the WebSocket) upstream to the real sim server.
- *
- *   IMPORTANT: this is a hypothesis, not a confirmed root cause. Before
- *   relying on it, deploy and run `wrangler tail` while loading the
- *   client — if /showdown/* requests never reach this Worker, the browser
- *   is going straight to the sim host and this fix is the right direction.
- *   If they *do* arrive and still hang, the problem is elsewhere (the
- *   relay itself, or CloudPhone's WebSocket support in general).
- *
- * Deployment:
- *   Push to the connected GitHub repo — Cloudflare Workers Builds
- *   auto-detects wrangler.toml and redeploys.
+ *   Browser (240×320) → Cloudflare Worker → play.pokemonshowdown.com (HTML/Assets)
+ *   Browser (240×320) ──────────────────────> sim3.psim.us (Direct WebSocket)
  * ============================================================================
  */
 
 const TARGET_HOST = 'play.pokemonshowdown.com';
 const TARGET_ORIGIN = `https://${TARGET_HOST}`;
 
-// Fallback only — the real host is read live from config.js on each
-// /showdown/* request so this doesn't go stale if Showdown rebalances
-// you onto a different sim node.
-const DEFAULT_SIM_HOST = 'sim3.psim.us';
-
 // ─── Scale Constants ──────────────────────────────────────────────────────────
 const BATTLE_SCALE = 0.375;
 
-// ─── Injected CSS (unchanged from your original — kept in full) ──────────────
+// ─── Injected CSS ─────────────────────────────────────────────────────────────
 const INJECTED_CSS = `
 /* ═══════════════════════════════════════════════════════════════════════════
    POKÉMON SHOWDOWN — QVGA 240×320 FEATURE PHONE OVERRIDE
@@ -432,7 +404,7 @@ a {
 }
 `;
 
-// ─── HTMLRewriter: <head> Style Injector ──────────────────────────────────────
+// ─── HTMLRewriter Injectors ───────────────────────────────────────────────────
 class HeadInjector {
   element(element) {
     element.prepend(
@@ -442,7 +414,6 @@ class HeadInjector {
   }
 }
 
-// ─── HTMLRewriter: Viewport Meta Lock ─────────────────────────────────────────
 class ViewportInjector {
   element(element) {
     element.setAttribute(
@@ -452,12 +423,6 @@ class ViewportInjector {
   }
 }
 
-// ─── Strips Domain from Set-Cookie so cookies actually stick to this Worker ──
-// Upstream Set-Cookie headers are scoped to pokemonshowdown.com. Since the
-// browser thinks it's on this Worker's origin, it will silently refuse to
-// store a cookie whose Domain doesn't match — which quietly breaks login /
-// session upkeep. Stripping Domain makes the cookie host-only, valid for
-// whatever domain this Worker is actually running on.
 function stripSetCookieDomain(headers) {
   const cookies = typeof headers.getSetCookie === 'function' ? headers.getSetCookie() : [];
   if (!cookies.length) return;
@@ -468,79 +433,14 @@ function stripSetCookieDomain(headers) {
   }
 }
 
-// ─── Discover the live sim server host from the real config.js ───────────────
-// Cheap safety net against Showdown rebalancing you onto sim2/sim4/etc.
-async function resolveSimHost() {
-  try {
-    const res = await fetch(`${TARGET_ORIGIN}/config/config.js`, {
-      headers: { Host: TARGET_HOST, Origin: TARGET_ORIGIN, Referer: `${TARGET_ORIGIN}/` },
-    });
-    const text = await res.text();
-    const match = text.match(/\bsim\d*\.psim\.us\b/);
-    return match ? match[0] : DEFAULT_SIM_HOST;
-  } catch (e) {
-    return DEFAULT_SIM_HOST;
-  }
-}
-
 // ─── Main Export: Fetch Handler ───────────────────────────────────────────────
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    const proxyHostname = url.hostname; // this Worker's own host, as the client sees it
 
-    // ── Battle-simulator traffic ────────────────────────────────────────────
-    // After config.js is rewritten (below), the client opens its WebSocket to
-    // *this* Worker's own /showdown/* path instead of sim3.psim.us directly.
-    // We proxy it upstream to the real, currently-active sim host.
-    if (url.pathname.startsWith('/showdown/')) {
-      const simHost = await resolveSimHost();
-      const simUrl = new URL(url.toString());
-      simUrl.hostname = simHost;
-      simUrl.protocol = 'https:';
-
-      const upgradeHeader = request.headers.get('Upgrade');
-      if (upgradeHeader && upgradeHeader.toLowerCase() === 'websocket') {
-        return handleWebSocket(request, simUrl, simHost);
-      }
-
-      // Non-WS SockJS fallback transports (xhr_streaming, xhr, info, etc.)
-      const simHeaders = new Headers(request.headers);
-      simHeaders.set('Host', simHost);
-      simHeaders.set('Origin', TARGET_ORIGIN);
-      simHeaders.delete('CF-Connecting-IP');
-      simHeaders.delete('CF-IPCountry');
-      simHeaders.delete('CF-Ray');
-      simHeaders.delete('CF-Visitor');
-
-      const simResponse = await fetch(new Request(simUrl.toString(), {
-        method: request.method,
-        headers: simHeaders,
-        body: request.body,
-        redirect: 'follow',
-      }));
-
-      const simRespHeaders = new Headers(simResponse.headers);
-      simRespHeaders.delete('X-Frame-Options');
-      simRespHeaders.delete('Content-Security-Policy');
-      stripSetCookieDomain(simRespHeaders);
-
-      return new Response(simResponse.body, {
-        status: simResponse.status,
-        statusText: simResponse.statusText,
-        headers: simRespHeaders,
-      });
-    }
-
-    // ── Everything else: normal site traffic → play.pokemonshowdown.com ────
+    // Proxy all site requests to play.pokemonshowdown.com
     url.hostname = TARGET_HOST;
     url.protocol = 'https:';
-
-    // Safety net: shouldn't normally hit for non-/showdown/ paths, but keep it.
-    const upgradeHeader = request.headers.get('Upgrade');
-    if (upgradeHeader && upgradeHeader.toLowerCase() === 'websocket') {
-      return handleWebSocket(request, url, TARGET_HOST);
-    }
 
     const outHeaders = new Headers(request.headers);
     outHeaders.set('Host', TARGET_HOST);
@@ -561,6 +461,8 @@ export default {
     let response = await fetch(outRequest);
 
     const respHeaders = new Headers(response.headers);
+    
+    // Strip security headers that block cross-origin websockets or CSS injections
     respHeaders.delete('X-Frame-Options');
     respHeaders.delete('Content-Security-Policy');
     respHeaders.delete('Content-Security-Policy-Report-Only');
@@ -572,31 +474,7 @@ export default {
 
     const contentType = respHeaders.get('Content-Type') || '';
 
-    // ── config.js: point the client's sim server at this Worker's own host ──
-    if (url.pathname === '/config/config.js') {
-      let text = await response.text();
-      text = text.replace(/\bsim\d*\.psim\.us\b/g, proxyHostname);
-
-      // text.replace() almost never preserves byte length, so the
-      // Content-Length we inherited from the *unmodified* upstream response
-      // is now wrong. Sending a stale Content-Length alongside a body of a
-      // different length triggers a hard client-side failure
-      // (net::ERR_CONTENT_LENGTH_MISMATCH) with no JS-level error to show
-      // for it — the script just silently fails to load, Config.defaultserver
-      // never gets set, and the client hangs forever with nowhere to connect.
-      // Content-Encoding is stale for the same reason: fetch() already
-      // transparently decoded the body for us, but the header claiming it's
-      // still gzip/br survives unless we drop it too.
-      respHeaders.delete('Content-Length');
-      respHeaders.delete('Content-Encoding');
-
-      return new Response(text, {
-        status: response.status,
-        statusText: response.statusText,
-        headers: respHeaders,
-      });
-    }
-
+    // Inject QVGA viewport and D-pad styling into the main HTML document
     if (contentType.includes('text/html')) {
       const modifiedResponse = new Response(response.body, {
         status: response.status,
@@ -617,61 +495,3 @@ export default {
     });
   },
 };
-
-// ─── WebSocket Proxy Handler ──────────────────────────────────────────────────
-async function handleWebSocket(originalRequest, targetUrl, hostHeader) {
-  const wsUrl = targetUrl.toString();
-
-  const wsHeaders = new Headers(originalRequest.headers);
-  wsHeaders.set('Host', hostHeader);
-  wsHeaders.set('Origin', TARGET_ORIGIN);
-  wsHeaders.set('Upgrade', 'websocket');
-  wsHeaders.delete('CF-Connecting-IP');
-  wsHeaders.delete('CF-IPCountry');
-  wsHeaders.delete('CF-Ray');
-  wsHeaders.delete('CF-Visitor');
-
-  const upstreamResponse = await fetch(wsUrl, { headers: wsHeaders });
-
-  if (upstreamResponse.status !== 101) {
-    return new Response(upstreamResponse.body, {
-      status: upstreamResponse.status,
-      statusText: upstreamResponse.statusText,
-      headers: upstreamResponse.headers,
-    });
-  }
-
-  const upstreamSocket = upstreamResponse.webSocket;
-  if (!upstreamSocket) {
-    return new Response('WebSocket upgrade failed: no socket', { status: 502 });
-  }
-
-  upstreamSocket.accept();
-
-  const pair = new WebSocketPair();
-  const [clientSocket, serverSocket] = Object.values(pair);
-  serverSocket.accept();
-
-  serverSocket.addEventListener('message', (event) => {
-    try { upstreamSocket.send(event.data); } catch (e) { /* closed */ }
-  });
-
-  upstreamSocket.addEventListener('message', (event) => {
-    try { serverSocket.send(event.data); } catch (e) { /* closed */ }
-  });
-
-  serverSocket.addEventListener('close', (event) => {
-    try { upstreamSocket.close(event.code, event.reason); } catch (e) {}
-  });
-  upstreamSocket.addEventListener('close', (event) => {
-    try { serverSocket.close(event.code, event.reason); } catch (e) {}
-  });
-  serverSocket.addEventListener('error', () => {
-    try { upstreamSocket.close(1011, 'Client error'); } catch (e) {}
-  });
-  upstreamSocket.addEventListener('error', () => {
-    try { serverSocket.close(1011, 'Upstream error'); } catch (e) {}
-  });
-
-  return new Response(null, { status: 101, webSocket: clientSocket });
-}
