@@ -2,8 +2,4 @@ name = "cloudphone-pokemon-showdown"
 main = "worker.js"
 compatibility_date = "2026-07-01"
 
-# No bindings needed — pure proxy worker
 
-[[migrations]]
-tag = "v2"
-deleted_classes = ["BattleSession"]
