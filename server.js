@@ -28,7 +28,7 @@ const simProxy = httpProxy.createProxyServer({
   ws: true,
 });
 
-// Force upstream to send uncompressed plaintext so body rewrites do not corrupt
+// Force upstream uncompressed data to allow regex and string injection
 webProxy.on("proxyReq", (proxyReq) => {
   proxyReq.setHeader("accept-encoding", "identity");
 });
@@ -66,7 +66,25 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       text = text.split("//play.pokemonshowdown.com/config/config.js")
                  .join(`//${currentHost}/config/config.js`);
 
-      const injected = `
+      const injectedHead = `
+<style>
+  /* 1. Hide full-screen move explanation tooltips */
+  #tooltipwrapper, .tooltip, .battle-log-tag {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+  }
+  /* 2. Distinct high-visibility D-Pad spatial focus outline */
+  button:focus, a:focus, input:focus, select:focus {
+    outline: 3px solid #ffcc00 !important;
+    outline-offset: 1px !important;
+    box-shadow: 0 0 8px #ffcc00 !important;
+  }
+</style>
+`;
+
+      const injectedBody = `
 <script>
 (function() {
   try {
@@ -83,7 +101,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
         return;
       }
-      // Blocks Showdown's sibling tab-switching listeners without preventDefault()
       e.stopImmediatePropagation();
     }
   }
@@ -93,7 +110,51 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     document.addEventListener(evt, interceptDpad, true);
   });
 
-  // 2. Disable Showdown's internal room-switching methods directly
+  // 2. Direct Keypad Action Mapping (1-4 Moves, 5-0 Switch, * Tera, # Undo)
+  window.addEventListener('keydown', function(e) {
+    if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+
+    var key = e.key;
+
+    // Moves 1-4
+    if (['1', '2', '3', '4'].includes(key)) {
+      var moveBtn = document.querySelector('button[name="chooseMove"][value="' + key + '"]');
+      if (moveBtn) {
+        moveBtn.click();
+        e.preventDefault();
+      }
+    }
+
+    // Switches 5-0 (Slots 1-6)
+    var switchMap = { '5': '1', '6': '2', '7': '3', '8': '4', '9': '5', '0': '6' };
+    if (switchMap[key]) {
+      var switchBtn = document.querySelector('button[name="chooseSwitch"][value="' + switchMap[key] + '"]');
+      if (switchBtn) {
+        switchBtn.click();
+        e.preventDefault();
+      }
+    }
+
+    // Gimmicks (*) -> Tera / Mega / Dynamax
+    if (key === '*') {
+      var tera = document.querySelector('input[name="terastallize"], input[name="megaEvolution"]');
+      if (tera) {
+        tera.click();
+        e.preventDefault();
+      }
+    }
+
+    // Cancel / Undo (#)
+    if (key === '#') {
+      var undo = document.querySelector('button[name="undo"]');
+      if (undo) {
+        undo.click();
+        e.preventDefault();
+      }
+    }
+  });
+
+  // 3. Disable Showdown's internal room-switching methods
   function patchShowdown() {
     if (window.app) {
       app.focusPrevRoom = function() {};
@@ -101,7 +162,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     }
   }
 
-  // 3. Auto-connect polling loop
+  // 4. Auto-connect polling loop
   function attemptConnect() {
     try {
       window.Config = window.Config || {};
@@ -139,9 +200,10 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 })();
 </script>`;
 
+      text = text.replace("<head>", `<head>${injectedHead}`);
       text = text.includes("</body>")
-        ? text.replace("</body>", `${injected}</body>`)
-        : text + injected;
+        ? text.replace("</body>", `${injectedBody}</body>`)
+        : text + injectedBody;
 
       body = Buffer.from(text, "utf8");
       proxyRes.headers["content-length"] = Buffer.byteLength(body);
@@ -167,12 +229,18 @@ simProxy.on("error", (err, req, socket) => {
 });
 
 // ---------------------------------------------------------------------------
-// 1. Short-Circuit Trackers & Dead Analytics Requests
+// 1. Short-Circuit Trackers & Ad Networks
 // ---------------------------------------------------------------------------
-app.get(/(analytics\.js|gtag\/js|ga\.js)/, (req, res) => {
+app.get([
+  /(analytics\.js|gtag\/js|ga\.js)/,
+  /ad-manager\.js/,
+  /pubads.*\.js/,
+  /adx-floors\.js/,
+  /afihbs\.js/,
+], (req, res) => {
   res.setHeader("Content-Type", "application/javascript; charset=utf-8");
   res.setHeader("Cache-Control", "public, max-age=86400");
-  return res.send("// Analytics disabled");
+  return res.send("// Ad/Analytics disabled by proxy");
 });
 
 // ---------------------------------------------------------------------------
@@ -235,7 +303,7 @@ app.use((req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. Native WebSocket Upgrade Listener
+// 4. WebSocket Upgrade Listener
 // ---------------------------------------------------------------------------
 const server = http.createServer(app);
 
