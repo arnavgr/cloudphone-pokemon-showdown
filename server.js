@@ -28,7 +28,7 @@ const simProxy = httpProxy.createProxyServer({
   ws: true,
 });
 
-// Force upstream to send uncompressed plaintext so body rewrites don't corrupt
+// Force upstream to send uncompressed plaintext so body rewrites do not corrupt
 webProxy.on("proxyReq", (proxyReq) => {
   proxyReq.setHeader("accept-encoding", "identity");
 });
@@ -66,23 +66,42 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       text = text.split("//play.pokemonshowdown.com/config/config.js")
                  .join(`//${currentHost}/config/config.js`);
 
-      // Invisible, zero-UI boot script: polls silently and connects instantly
       const injected = `
 <script>
 (function() {
-  // Prevent D-pad left/right from navigating away from battle
-  window.addEventListener('keydown', function(e) {
-    if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') &&
-        (window.location.hash.includes('battle') || document.querySelector('.battle-room'))) {
-      e.stopPropagation();
-      e.preventDefault();
-    }
-  }, true);
-
   try {
     window.localStorage.setItem('showdown_crossteams', 'false');
   } catch (e) {}
 
+  // 1. Intercept horizontal D-Pad without canceling native spatial focus
+  function interceptDpad(e) {
+    var key = e.key;
+    var code = e.keyCode || e.which;
+    var isHorizontal = (key === 'ArrowLeft' || key === 'ArrowRight' || key === 'Left' || key === 'Right' || code === 37 || code === 39);
+
+    if (isHorizontal) {
+      if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
+        return;
+      }
+      // Blocks Showdown's sibling tab-switching listeners without preventDefault()
+      e.stopImmediatePropagation();
+    }
+  }
+
+  ['keydown', 'keyup'].forEach(function(evt) {
+    window.addEventListener(evt, interceptDpad, true);
+    document.addEventListener(evt, interceptDpad, true);
+  });
+
+  // 2. Disable Showdown's internal room-switching methods directly
+  function patchShowdown() {
+    if (window.app) {
+      app.focusPrevRoom = function() {};
+      app.focusNextRoom = function() {};
+    }
+  }
+
+  // 3. Auto-connect polling loop
   function attemptConnect() {
     try {
       window.Config = window.Config || {};
@@ -94,6 +113,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
         altport: 80,
         ssl: true
       };
+      patchShowdown();
       if (window.app && typeof app.connect === 'function') {
         if (!app.connection) {
           app.connect();
@@ -104,10 +124,10 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     return false;
   }
 
-  // Poll every 50ms so it connects immediately when app is ready (no waiting on window.onload)
   var pollCount = 0;
   var connectInterval = setInterval(function() {
     pollCount++;
+    patchShowdown();
     if (attemptConnect() || pollCount > 200) {
       clearInterval(connectInterval);
     }
