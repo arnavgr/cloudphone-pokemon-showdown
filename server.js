@@ -28,7 +28,7 @@ const simProxy = httpProxy.createProxyServer({
   ws: true,
 });
 
-// Force uncompressed transfer so string/HTML replacement functions reliably
+// Force uncompressed transfer for reliable HTML rewrites
 webProxy.on("proxyReq", (proxyReq) => {
   proxyReq.setHeader("accept-encoding", "identity");
 });
@@ -76,55 +76,13 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     pointer-events: none !important;
     position: absolute !important;
     top: -9999px !important;
-    height: 0 !important;
-    width: 0 !important;
   }
 
-  /* 2. Distinct spatial focus indicator */
+  /* 2. High-visibility spatial focus indicator */
   button:focus, a:focus, input:focus, select:focus {
     outline: 3px solid #ffcc00 !important;
     outline-offset: 1px !important;
     box-shadow: 0 0 8px #ffcc00 !important;
-  }
-
-  /* 3. QVGA Action Inspector Modal */
-  #cp-inspector {
-    position: fixed;
-    top: 28px;
-    left: 4px;
-    right: 4px;
-    background: rgba(14, 18, 24, 0.98);
-    border: 2px solid #ffd700;
-    border-radius: 6px;
-    color: #ffffff;
-    padding: 8px;
-    z-index: 2147483647;
-    font-family: sans-serif;
-    font-size: 11px;
-    line-height: 1.35;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.9);
-  }
-  #cp-inspector-title {
-    font-size: 12px;
-    font-weight: bold;
-    color: #ffd700;
-    margin-bottom: 4px;
-    border-bottom: 1px solid #444;
-    padding-bottom: 2px;
-  }
-  #cp-inspector-body {
-    color: #e0e0e0;
-    margin-bottom: 6px;
-    max-height: 140px;
-    overflow-y: auto;
-  }
-  #cp-inspector-footer {
-    font-size: 10px;
-    color: #00ffcc;
-    font-weight: bold;
-    text-align: center;
-    border-top: 1px solid #333;
-    padding-top: 4px;
   }
 </style>
 `;
@@ -139,13 +97,14 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
   var activeInspectType = null; // 'move' | 'switch'
   var activeInspectIndex = null; // 1 - 6
 
+  // Create or retrieve centered inspector element with strict inline styling
   function getInspectorEl() {
     var el = document.getElementById('cp-inspector');
     if (!el) {
       el = document.createElement('div');
       el.id = 'cp-inspector';
-      el.style.display = 'none';
-      el.innerHTML = '<div id="cp-inspector-title"></div><div id="cp-inspector-body"></div><div id="cp-inspector-footer">[CALL / OK] Confirm &nbsp;|&nbsp; [#] Close</div>';
+      el.style.cssText = 'position:fixed!important;top:50%!important;left:50%!important;transform:translate(-50%,-50%)!important;width:92%!important;max-width:260px!important;background:#10141d!important;border:3px solid #ffd700!important;border-radius:8px!important;color:#fff!important;padding:8px!important;z-index:2147483647!important;font-family:sans-serif!important;font-size:11px!important;line-height:1.35!important;box-shadow:0 0 25px rgba(0,0,0,0.95)!important;box-sizing:border-box!important;display:none;';
+      el.innerHTML = '<div id="cp-insp-title" style="font-size:12px;font-weight:bold;color:#ffd700;margin-bottom:4px;border-bottom:1px solid #333;padding-bottom:2px;"></div><div id="cp-insp-body" style="color:#e0e0e0;margin-bottom:6px;max-height:150px;overflow-y:auto;"></div><div id="cp-insp-footer" style="font-size:10px;color:#00ffcc;font-weight:bold;text-align:center;border-top:1px solid #333;padding-top:4px;">[CALL / OK] Confirm &nbsp;|&nbsp; [#] Close</div>';
       document.body.appendChild(el);
     }
     return el;
@@ -153,33 +112,37 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
   function hideInspector() {
     var el = getInspectorEl();
-    el.style.display = 'none';
+    el.style.setProperty('display', 'none', 'important');
     activeInspectType = null;
     activeInspectIndex = null;
   }
 
   function showInspector(title, bodyHtml, type, index) {
     var el = getInspectorEl();
-    var titleEl = document.getElementById('cp-inspector-title');
-    var bodyEl = document.getElementById('cp-inspector-body');
+    var titleEl = document.getElementById('cp-insp-title');
+    var bodyEl = document.getElementById('cp-insp-body');
 
-    titleEl.innerHTML = title;
-    bodyEl.innerHTML = bodyHtml;
-    el.style.display = 'block';
+    if (titleEl) titleEl.innerHTML = title;
+    if (bodyEl) bodyEl.innerHTML = bodyHtml;
+
+    el.style.setProperty('display', 'block', 'important');
     activeInspectType = type;
     activeInspectIndex = index;
   }
 
-  function getBattleRoom() {
+  function getBattleRequest() {
     if (!window.app) return null;
-    if (app.curRoom && app.curRoom.battle) return app.curRoom;
-    if (app.curSideRoom && app.curSideRoom.battle) return app.curSideRoom;
+    var room = app.curRoom || app.curSideRoom;
+    if (room && room.request) return room.request;
+    if (room && room.battle && room.battle.request) return room.battle.request;
     if (app.rooms) {
       for (var k in app.rooms) {
-        if (app.rooms[k] && app.rooms[k].battle) return app.rooms[k];
+        var r = app.rooms[k];
+        if (r && r.request) return r.request;
+        if (r && r.battle && r.battle.request) return r.battle.request;
       }
     }
-    return app.curRoom || app.curSideRoom || null;
+    return null;
   }
 
   // 1. Horizontal D-Pad Isolation (ArrowLeft: 37, ArrowRight: 39)
@@ -207,7 +170,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     var code = e.keyCode || e.which;
     var eventCode = e.code;
 
-    // --- CALL (0) / ENTER (13) -> CONFIRM ---
+    // --- CALL (0) / ENTER (13) -> CONFIRM SELECTION ---
     var isCall = (key === 'Call' || code === 0);
     var isEnter = (key === 'Enter' || code === 13);
 
@@ -228,7 +191,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     }
 
     // --- # (KEY '#' / CODE 51) / ESCAPE (27) -> CLOSE OR UNDO ---
-    // Evaluated via key === '#' to prevent colliding with digit '3' (which shares code 51)
     if (key === '#' || key === 'Hash' || key === 'Pound' || key === 'Escape' || code === 27) {
       if (activeInspectType) {
         hideInspector();
@@ -237,7 +199,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
         if (undoBtn) {
           undoBtn.click();
         } else {
-          var room = getBattleRoom();
+          var room = app.curRoom || app.curSideRoom;
           if (room && typeof room.send === 'function') {
             room.send('/undo');
           }
@@ -287,34 +249,31 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     }
   }, true);
 
-  // Extract Detailed Move Info
+  // Extract Move Details
   function inspectMove(index) {
     var moveBtn = document.querySelector('button[name="chooseMove"][value="' + index + '"]') ||
                   document.querySelectorAll('button[name="chooseMove"]')[index - 1];
-    if (!moveBtn) return;
 
-    var room = getBattleRoom();
-    var reqMove = room && room.request && room.request.active && room.request.active[0] && room.request.active[0].moves[index - 1];
+    var req = getBattleRequest();
+    var reqMove = req && req.active && req.active[0] && req.active[0].moves && req.active[0].moves[index - 1];
 
-    var rawName = moveBtn.getAttribute('data-move') || moveBtn.innerText.split('\\n')[0] || ('Move ' + index);
+    var rawName = (moveBtn && (moveBtn.getAttribute('data-move') || moveBtn.innerText.split('\\n')[0])) || (reqMove && reqMove.move) || ('Move ' + index);
     var moveId = rawName.toLowerCase().replace(/[^a-z0-9]/g, '');
-    var dexData = (window.BattleMovedex && BattleMovedex[moveId]) ? BattleMovedex[moveId] : null;
+    var dexData = (window.BattleMovedex && BattleMovedex[moveId]) ? BattleMovedex[moveId] : (window.Dex && Dex.moves ? Dex.moves.get(rawName) : null);
 
     var html = '';
-    var moveName = dexData ? dexData.name : (reqMove ? reqMove.move : rawName);
-    var type = dexData ? dexData.type : 'Standard';
-    var category = dexData ? dexData.category : '';
-    var bp = dexData ? (dexData.basePower || '—') : '—';
-    var acc = dexData ? (dexData.accuracy === true ? '—' : dexData.accuracy + '%') : '—';
-    var ppText = reqMove && reqMove.pp !== undefined ? (reqMove.pp + '/' + reqMove.maxpp) : '—';
+    var moveName = (dexData && dexData.name) || (reqMove && reqMove.move) || rawName;
+    var type = (dexData && dexData.type) || 'Standard';
+    var category = (dexData && dexData.category) || '';
+    var bp = (dexData && (dexData.basePower || '—')) || '—';
+    var acc = (dexData && (dexData.accuracy === true ? '—' : (dexData.accuracy + '%'))) || '—';
+    var ppText = reqMove && reqMove.pp !== undefined ? (reqMove.pp + '/' + reqMove.maxpp) : (moveBtn ? moveBtn.innerText.replace(/\\n/g, ' ') : '—');
 
     html += '<div><b>Type:</b> ' + type + ' ' + (category ? '(' + category + ')' : '') + '</div>';
     html += '<div><b>Power:</b> ' + bp + ' &nbsp;|&nbsp; <b>Acc:</b> ' + acc + ' &nbsp;|&nbsp; <b>PP:</b> ' + ppText + '</div>';
 
     if (dexData && (dexData.shortDesc || dexData.desc)) {
-      html += '<div style="margin-top:4px;color:#bbb;">' + (dexData.shortDesc || dexData.desc) + '</div>';
-    } else {
-      html += '<div style="margin-top:4px;color:#bbb;">' + moveBtn.innerText.replace(/\\n/g, ' ') + '</div>';
+      html += '<div style="margin-top:4px;color:#bbb;font-size:10px;">' + (dexData.shortDesc || dexData.desc) + '</div>';
     }
 
     if (reqMove && reqMove.disabled) {
@@ -324,16 +283,15 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     showInspector('⚡ [' + index + '] ' + moveName, html, 'move', index);
   }
 
-  // Extract Detailed Switch Slot Info
+  // Extract Switch Slot Details
   function inspectPokemon(slot) {
     var switchBtn = document.querySelector('button[name="chooseSwitch"][value="' + slot + '"]') ||
                     document.querySelectorAll('button[name="chooseSwitch"]')[slot - 1];
-    if (!switchBtn) return;
 
-    var room = getBattleRoom();
-    var mon = room && room.request && room.request.side && room.request.side.pokemon && room.request.side.pokemon[slot - 1];
+    var req = getBattleRequest();
+    var mon = req && req.side && req.side.pokemon && req.side.pokemon[slot - 1];
 
-    var name = mon ? mon.details.split(',')[0] : ('Slot ' + slot);
+    var name = mon ? mon.details.split(',')[0] : (switchBtn ? switchBtn.innerText.split('\\n')[0] : ('Slot ' + slot));
     var html = '';
 
     if (mon) {
@@ -345,14 +303,16 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
         html += '<div style="margin-top:4px;"><b>Moves:</b> ' + mon.moves.join(', ') + '</div>';
       }
       if (mon.active) html += '<div style="color:#00ffcc;font-weight:bold;margin-top:2px;">[CURRENTLY IN BATTLE]</div>';
-    } else {
+    } else if (switchBtn) {
       html = '<div>' + switchBtn.innerText.replace(/\\n/g, '<br>') + '</div>';
+    } else {
+      html = '<div>No data available for Slot ' + slot + '</div>';
     }
 
     showInspector('🔄 [Slot ' + slot + '] ' + name, html, 'switch', slot);
   }
 
-  // 3. Disable Showdown Tooltips & Room Switchers
+  // 3. Disable Showdown Native Tooltips & Room Switchers
   function patchShowdown() {
     if (window.BattleTooltips) {
       BattleTooltips.prototype.showTooltip = function() {};
