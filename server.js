@@ -67,7 +67,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
       const injectedHead = `
 <style>
-  /* 1. Neutralize native hover tooltips */
+  /* 1. Suppress native hover tooltips */
   #tooltipwrapper, .tooltip, .tooltipwrapper, div[class*="tooltip"], .battle-log-tag {
     display: none !important;
     visibility: hidden !important;
@@ -77,7 +77,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     position: absolute !important;
   }
 
-  /* 2. Completely suppress on-screen mobile Chat buttons */
+  /* 2. Obliterate on-screen mobile chat buttons and side logs */
   button[name="openChat"],
   button[name="closeChat"],
   button[name="openBattleLog"],
@@ -88,9 +88,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
   button.battle-chat-toggle,
   .roomcontrols button[name="openChat"],
   .roomcontrols button[name="openBattleLog"],
-  .battle-options-menu,
-  [name="openBattleLog"],
-  [name="openChat"] {
+  .battle-options-menu {
     display: none !important;
     visibility: hidden !important;
     pointer-events: none !important;
@@ -101,33 +99,9 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     left: -9999px !important;
   }
 
-  /* 3. Default side chat hidden; floating popup overlay when toggled via Key 9 */
+  /* 3. Hide side chat log in normal view */
   .battle-log, .chat-log {
     display: none !important;
-  }
-  body.cp-chat-visible .battle-log,
-  body.cp-chat-visible .battleroom .battle-log {
-    display: flex !important;
-    flex-direction: column !important;
-    position: fixed !important;
-    top: 10px !important;
-    left: 8px !important;
-    width: 224px !important;
-    height: 275px !important;
-    z-index: 2147483640 !important;
-    background: rgba(12, 16, 22, 0.98) !important;
-    border: 2px solid #00ffcc !important;
-    border-radius: 6px !important;
-    box-shadow: 0 0 20px rgba(0,0,0,0.95) !important;
-    padding: 6px !important;
-    box-sizing: border-box !important;
-  }
-  body.cp-chat-visible .battle-log .inner,
-  body.cp-chat-visible .battleroom .battle-log .inner {
-    overflow-y: auto !important;
-    flex: 1 !important;
-    font-size: 10px !important;
-    color: #e0e0e0 !important;
   }
 
   /* 4. Spatial focus indicator */
@@ -203,6 +177,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     return '<span class="eff-badge eff-neutral">Neutral (1×)</span>';
   }
 
+  // --- INSPECTOR MODAL ---
   function getInspectorEl() {
     var el = document.getElementById('cp-inspector');
     if (!el) {
@@ -222,6 +197,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
   }
 
   function showInspector(title, bodyHtml, type, index) {
+    hideChatModal();
     var el = getInspectorEl();
     var titleEl = document.getElementById('cp-insp-title');
     var bodyEl = document.getElementById('cp-insp-body');
@@ -232,6 +208,50 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     el.style.setProperty('display', 'block', 'important');
     activeInspectType = type;
     activeInspectIndex = Number(index) || 1;
+  }
+
+  // --- FLOATING CHAT MODAL (KEY 9) ---
+  function getChatModalEl() {
+    var el = document.getElementById('cp-chat-modal');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'cp-chat-modal';
+      el.style.cssText = 'position:fixed!important;top:50%!important;left:50%!important;transform:translate(-50%,-50%)!important;width:224px!important;height:275px!important;background:#0c1016!important;border:2px solid #00ffcc!important;border-radius:6px!important;color:#e0e0e0!important;padding:6px!important;z-index:2147483646!important;font-family:sans-serif!important;font-size:10px!important;line-height:1.3!important;box-shadow:0 0 20px rgba(0,0,0,0.95)!important;box-sizing:border-box!important;display:none;flex-direction:column!important;';
+      el.innerHTML = '<div style="font-size:11px;font-weight:bold;color:#00ffcc;border-bottom:1px solid #333;padding-bottom:2px;margin-bottom:4px;">💬 Battle Chat & Log</div><div id="cp-chat-content" style="flex:1!important;overflow-y:auto!important;margin-bottom:4px;word-break:break-word;"></div><div style="font-size:9px;color:#aaa;text-align:center;border-top:1px solid #333;padding-top:2px;">[9] or [#] to Close</div>';
+      document.body.appendChild(el);
+    }
+    return el;
+  }
+
+  function isChatModalOpen() {
+    var el = getChatModalEl();
+    return el && el.style.display === 'flex';
+  }
+
+  function hideChatModal() {
+    var el = getChatModalEl();
+    el.style.setProperty('display', 'none', 'important');
+  }
+
+  function toggleChatModal() {
+    hideInspector();
+    var el = getChatModalEl();
+    if (isChatModalOpen()) {
+      hideChatModal();
+      return;
+    }
+
+    var contentEl = document.getElementById('cp-chat-content');
+    var existingLog = document.querySelector('.battle-log .inner') || document.querySelector('.battle-log') || document.querySelector('.chat-log');
+
+    if (existingLog && contentEl) {
+      contentEl.innerHTML = existingLog.innerHTML;
+    } else if (contentEl) {
+      contentEl.innerHTML = '<div style="color:#777;padding:10px 0;text-align:center;">No log or chat entries recorded.</div>';
+    }
+
+    el.style.setProperty('display', 'flex', 'important');
+    if (contentEl) contentEl.scrollTop = contentEl.scrollHeight;
   }
 
   function getBattleRoom() {
@@ -253,7 +273,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     return null;
   }
 
-  // Robust Opponent Active Target Resolution
   function getOpponentActive() {
     var room = getBattleRoom();
     if (!room || !room.battle) return null;
@@ -296,7 +315,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     return [];
   }
 
-  // 1. Keyup Listener (Neutralize bubbling on release without executing actions)
+  // 1. Release Isolation (Neutralizes bubbling on key release)
   window.addEventListener('keyup', function(e) {
     var code = e.keyCode || e.which;
     var isHorizontal = (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || code === 37 || code === 39);
@@ -305,7 +324,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     }
   }, true);
 
-  // 2. Single Unified Keydown Controller (Fixes multi-step D-Pad over-triggering)
+  // 2. Single Unified Keydown Controller
   window.addEventListener('keydown', function(e) {
     if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
 
@@ -378,8 +397,8 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
     // --- # (51 / '#') / ESCAPE (27) -> CLOSE OR UNDO ---
     if (key === '#' || key === 'Hash' || key === 'Pound' || key === 'Escape' || code === 27) {
-      if (document.body.classList.contains('cp-chat-visible')) {
-        document.body.classList.remove('cp-chat-visible');
+      if (isChatModalOpen()) {
+        hideChatModal();
         e.preventDefault();
         e.stopImmediatePropagation();
         return;
@@ -434,9 +453,9 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       return;
     }
 
-    // --- 9 -> TOGGLE FLOATING CHAT OVERLAY ---
-    if (key === '9' || code === 57) {
-      document.body.classList.toggle('cp-chat-visible');
+    // --- 9 -> TOGGLE FLOATING CHAT MODAL ---
+    if (key === '9' || code === 57 || eventCode === 'Digit9' || eventCode === 'Numpad9') {
+      toggleChatModal();
       e.preventDefault();
       e.stopImmediatePropagation();
       return;
@@ -544,7 +563,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     showInspector('🔄 Switch Slot ' + slot + '/6: ' + name, html, 'switch', slot);
   }
 
-  // Extract Opponent Defensive Profile & Speed Range
+  // Extract Opponent Profile & Speed Range
   function inspectOpponent() {
     var foe = getOpponentActive();
     var foeTypes = getOpponentTypes();
@@ -593,12 +612,12 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     showInspector('🎯 Opponent: ' + cleanName, html, 'opponent', 1);
   }
 
-  // 3. Automated DOM Cleanup & Tooltip Neutralization
+  // 3. Automated DOM Sweeper & Tooltip Neutralization
   function patchShowdown() {
-    // Purge on-screen chat toggle buttons
-    var chatBtns = document.querySelectorAll('button[name="openChat"], button[name="openBattleLog"], button.battle-chat-toggle, .battle-chat-toggle');
-    for (var i = 0; i < chatBtns.length; i++) {
-      chatBtns[i].style.setProperty('display', 'none', 'important');
+    // Purge and delete on-screen chat toggle buttons
+    var chatElements = document.querySelectorAll('button[name="openChat"], button[name="openBattleLog"], button.battle-chat-toggle, .battle-chat-toggle, .chat-toggle');
+    for (var i = 0; i < chatElements.length; i++) {
+      chatElements[i].remove();
     }
 
     if (window.BattleTooltips) {
@@ -614,7 +633,9 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     }
   }
 
-  // 4. Auto-Connect Polling Loop
+  // 4. Active Sweeper & Auto-Connect Polling Loop
+  setInterval(patchShowdown, 250);
+
   function attemptConnect() {
     try {
       window.Config = window.Config || {};
@@ -638,7 +659,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
   var pollCount = 0;
   var connectInterval = setInterval(function() {
     pollCount++;
-    patchShowdown();
     if (attemptConnect() || pollCount > 200) {
       clearInterval(connectInterval);
     }
@@ -751,7 +771,7 @@ app.use((req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. WebSocket Upgrade Listener
+// 4. Native WebSocket Upgrade Listener
 // ---------------------------------------------------------------------------
 const server = http.createServer(app);
 
