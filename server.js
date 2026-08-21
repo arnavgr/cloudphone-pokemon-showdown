@@ -28,7 +28,6 @@ const simProxy = httpProxy.createProxyServer({
   ws: true,
 });
 
-// Force uncompressed transfer for reliable HTML rewrites
 webProxy.on("proxyReq", (proxyReq) => {
   proxyReq.setHeader("accept-encoding", "identity");
 });
@@ -68,22 +67,102 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
       const injectedHead = `
 <style>
-  /* 1. Neutralize Showdown hover tooltips completely */
+  /* 1. Neutralize native hover tooltips */
   #tooltipwrapper, .tooltip, .tooltipwrapper, div[class*="tooltip"], .battle-log-tag {
     display: none !important;
     visibility: hidden !important;
     opacity: 0 !important;
     pointer-events: none !important;
-    position: absolute !important;
     top: -9999px !important;
+    position: absolute !important;
   }
 
-  /* 2. High-visibility spatial focus indicator */
-  button:focus, a:focus, input:focus, select:focus {
-    outline: 3px solid #ffcc00 !important;
-    outline-offset: 1px !important;
-    box-shadow: 0 0 8px #ffcc00 !important;
+  /* 2. Hide chat by default; render as a floating overlay popup when toggled */
+  .battle-log, .chat-log, .battle-chat-toggle {
+    display: none !important;
   }
+  body.cp-chat-visible .battle-log {
+    display: flex !important;
+    flex-direction: column !important;
+    position: fixed !important;
+    top: 6vh !important;
+    left: 3vw !important;
+    width: 94vw !important;
+    height: 84vh !important;
+    z-index: 2000000 !important;
+    background: rgba(12, 16, 22, 0.98) !important;
+    border: 0.8vw solid #00ffcc !important;
+    border-radius: 2vw !important;
+    box-shadow: 0 0 6vw rgba(0,0,0,0.95) !important;
+    padding: 2vw !important;
+    box-sizing: border-box !important;
+  }
+  body.cp-chat-visible .battle-log .inner {
+    overflow-y: auto !important;
+    flex: 1 !important;
+    font-size: 3.2vw !important;
+  }
+
+  /* 3. Spatial focus ring */
+  button:focus, a:focus, input:focus, select:focus {
+    outline: 0.8vw solid #ffcc00 !important;
+    outline-offset: 0.4vw !important;
+    box-shadow: 0 0 2vw #ffcc00 !important;
+  }
+
+  /* 4. Responsive Viewport (vw/vh) Compact Modal */
+  #cp-inspector {
+    position: fixed !important;
+    top: 6vh !important;
+    left: 3vw !important;
+    width: 94vw !important;
+    max-height: 86vh !important;
+    background: rgba(14, 18, 26, 0.98) !important;
+    border: 0.8vw solid #ffd700 !important;
+    border-radius: 2vw !important;
+    color: #ffffff !important;
+    padding: 2.5vw !important;
+    z-index: 2147483647 !important;
+    font-family: sans-serif !important;
+    font-size: 3.4vw !important;
+    line-height: 1.35 !important;
+    box-shadow: 0 0 5vw rgba(0,0,0,0.95) !important;
+    box-sizing: border-box !important;
+    display: none;
+    overflow-y: auto !important;
+  }
+  #cp-insp-title {
+    font-size: 3.8vw !important;
+    font-weight: bold !important;
+    color: #ffd700 !important;
+    margin-bottom: 1vh !important;
+    border-bottom: 0.3vw solid #444 !important;
+    padding-bottom: 0.6vh !important;
+  }
+  #cp-insp-body {
+    color: #e0e0e0 !important;
+    margin-bottom: 1.2vh !important;
+  }
+  #cp-insp-footer {
+    font-size: 2.9vw !important;
+    color: #00ffcc !important;
+    font-weight: bold !important;
+    text-align: center !important;
+    border-top: 0.3vw solid #333 !important;
+    padding-top: 0.8vh !important;
+  }
+  .eff-badge {
+    display: inline-block;
+    padding: 0.2vh 1.2vw;
+    border-radius: 1vw;
+    font-weight: bold;
+    font-size: 2.9vw;
+    margin: 0.2vh 0.4vw;
+  }
+  .eff-super { background: #1b5e20; color: #a5d6a7; border: 1px solid #4caf50; }
+  .eff-neutral { background: #37474f; color: #eceff1; }
+  .eff-resist { background: #b71c1c; color: #ef9a9a; border: 1px solid #e57373; }
+  .eff-immune { background: #212121; color: #9e9e9e; border: 1px solid #616161; }
 </style>
 `;
 
@@ -94,17 +173,57 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     window.localStorage.setItem('showdown_crossteams', 'false');
   } catch (e) {}
 
-  var activeInspectType = null; // 'move' | 'switch'
-  var activeInspectIndex = null; // 1 - 6
+  var activeInspectType = null; // 'move' | 'switch' | 'opponent'
+  var activeInspectIndex = 1;
 
-  // Create or retrieve centered inspector element with strict inline styling
+  var TYPE_LIST = ['Normal','Fire','Water','Electric','Grass','Ice','Fighting','Poison','Ground','Flying','Psychic','Bug','Rock','Ghost','Dragon','Dark','Steel','Fairy'];
+
+  var TYPE_CHART = {
+    Normal: { Rock: 0.5, Ghost: 0, Steel: 0.5 },
+    Fire: { Fire: 0.5, Water: 0.5, Grass: 2, Ice: 2, Bug: 2, Rock: 0.5, Dragon: 0.5, Steel: 2 },
+    Water: { Fire: 2, Water: 0.5, Grass: 0.5, Ground: 2, Rock: 2, Dragon: 0.5 },
+    Electric: { Water: 2, Electric: 0.5, Grass: 0.5, Ground: 0, Flying: 2, Dragon: 0.5 },
+    Grass: { Fire: 0.5, Water: 2, Grass: 0.5, Poison: 0.5, Ground: 2, Flying: 0.5, Bug: 0.5, Rock: 2, Dragon: 0.5, Steel: 0.5 },
+    Ice: { Fire: 0.5, Water: 0.5, Grass: 2, Ice: 0.5, Ground: 2, Flying: 2, Dragon: 2, Steel: 0.5 },
+    Fighting: { Normal: 2, Ice: 2, Poison: 0.5, Flying: 0.5, Psychic: 0.5, Bug: 0.5, Rock: 2, Ghost: 0, Dark: 2, Steel: 2, Fairy: 0.5 },
+    Poison: { Grass: 2, Poison: 0.5, Ground: 0.5, Rock: 0.5, Ghost: 0.5, Steel: 0, Fairy: 2 },
+    Ground: { Fire: 2, Electric: 2, Grass: 0.5, Poison: 2, Flying: 0, Bug: 0.5, Rock: 2, Steel: 2 },
+    Flying: { Electric: 0.5, Grass: 2, Fighting: 2, Bug: 2, Rock: 0.5, Steel: 0.5 },
+    Psychic: { Fighting: 2, Poison: 2, Psychic: 0.5, Dark: 0, Steel: 0.5 },
+    Bug: { Fire: 0.5, Grass: 2, Fighting: 0.5, Poison: 0.5, Flying: 0.5, Psychic: 2, Ghost: 0.5, Steel: 0.5, Fairy: 0.5 },
+    Rock: { Fire: 2, Ice: 2, Fighting: 0.5, Ground: 0.5, Flying: 2, Bug: 2, Steel: 0.5 },
+    Ghost: { Normal: 0, Psychic: 2, Ghost: 2, Dark: 0.5 },
+    Dragon: { Dragon: 2, Steel: 0.5, Fairy: 0 },
+    Dark: { Fighting: 0.5, Psychic: 2, Ghost: 2, Dark: 0.5, Fairy: 0.5 },
+    Steel: { Fire: 0.5, Water: 0.5, Electric: 0.5, Ice: 2, Rock: 2, Steel: 0.5, Fairy: 2 },
+    Fairy: { Fire: 0.5, Fighting: 2, Poison: 0.5, Dragon: 2, Dark: 2, Steel: 0.5 }
+  };
+
+  function getEffectiveness(moveType, targetTypes) {
+    if (!moveType || !targetTypes || !targetTypes.length || !TYPE_CHART[moveType]) return 1;
+    var mult = 1;
+    for (var i = 0; i < targetTypes.length; i++) {
+      var t = targetTypes[i];
+      if (TYPE_CHART[moveType][t] !== undefined) {
+        mult *= TYPE_CHART[moveType][t];
+      }
+    }
+    return mult;
+  }
+
+  function formatMultiplierBadge(mult) {
+    if (mult === 0) return '<span class="eff-badge eff-immune">Immune (0×)</span>';
+    if (mult >= 2) return '<span class="eff-badge eff-super">Super Effective (' + mult + '×)</span>';
+    if (mult <= 0.5) return '<span class="eff-badge eff-resist">Not Effective (' + mult + '×)</span>';
+    return '<span class="eff-badge eff-neutral">Neutral (1×)</span>';
+  }
+
   function getInspectorEl() {
     var el = document.getElementById('cp-inspector');
     if (!el) {
       el = document.createElement('div');
       el.id = 'cp-inspector';
-      el.style.cssText = 'position:fixed!important;top:50%!important;left:50%!important;transform:translate(-50%,-50%)!important;width:92%!important;max-width:260px!important;background:#10141d!important;border:3px solid #ffd700!important;border-radius:8px!important;color:#fff!important;padding:8px!important;z-index:2147483647!important;font-family:sans-serif!important;font-size:11px!important;line-height:1.35!important;box-shadow:0 0 25px rgba(0,0,0,0.95)!important;box-sizing:border-box!important;display:none;';
-      el.innerHTML = '<div id="cp-insp-title" style="font-size:12px;font-weight:bold;color:#ffd700;margin-bottom:4px;border-bottom:1px solid #333;padding-bottom:2px;"></div><div id="cp-insp-body" style="color:#e0e0e0;margin-bottom:6px;max-height:150px;overflow-y:auto;"></div><div id="cp-insp-footer" style="font-size:10px;color:#00ffcc;font-weight:bold;text-align:center;border-top:1px solid #333;padding-top:4px;">[CALL / OK] Confirm &nbsp;|&nbsp; [#] Close</div>';
+      el.innerHTML = '<div id="cp-insp-title"></div><div id="cp-insp-body"></div><div id="cp-insp-footer">[CALL/OK] Use | [D-Pad] Cycle | [#] Close</div>';
       document.body.appendChild(el);
     }
     return el;
@@ -114,7 +233,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     var el = getInspectorEl();
     el.style.setProperty('display', 'none', 'important');
     activeInspectType = null;
-    activeInspectIndex = null;
   }
 
   function showInspector(title, bodyHtml, type, index) {
@@ -127,42 +245,104 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
     el.style.setProperty('display', 'block', 'important');
     activeInspectType = type;
-    activeInspectIndex = index;
+    activeInspectIndex = Number(index) || 1;
+  }
+
+  function getBattleRoom() {
+    if (!window.app) return null;
+    var room = app.curRoom || app.curSideRoom;
+    if (room && room.battle) return room;
+    if (app.rooms) {
+      for (var k in app.rooms) {
+        if (app.rooms[k] && app.rooms[k].battle) return app.rooms[k];
+      }
+    }
+    return room || null;
   }
 
   function getBattleRequest() {
-    if (!window.app) return null;
-    var room = app.curRoom || app.curSideRoom;
+    var room = getBattleRoom();
     if (room && room.request) return room.request;
     if (room && room.battle && room.battle.request) return room.battle.request;
-    if (app.rooms) {
-      for (var k in app.rooms) {
-        var r = app.rooms[k];
-        if (r && r.request) return r.request;
-        if (r && r.battle && r.battle.request) return r.battle.request;
-      }
-    }
     return null;
   }
 
-  // 1. Horizontal D-Pad Isolation (ArrowLeft: 37, ArrowRight: 39)
-  function interceptDpad(e) {
+  function getOpponentActive() {
+    var room = getBattleRoom();
+    if (!room || !room.battle || !room.battle.foe) return null;
+    var foeActive = room.battle.foe.active;
+    return (foeActive && foeActive[0]) ? foeActive[0] : null;
+  }
+
+  function getOpponentTypes() {
+    var foe = getOpponentActive();
+    if (!foe) return [];
+    if (foe.terastallized || foe.teraType) return [foe.teraType || foe.terastallized];
+    if (foe.types && foe.types.length) return foe.types;
+    if (foe.speciesData && foe.speciesData.types) return foe.speciesData.types;
+    var species = (foe.species || foe.name || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    if (window.BattlePokedex && BattlePokedex[species] && BattlePokedex[species].types) {
+      return BattlePokedex[species].types;
+    }
+    return [];
+  }
+
+  // 1. D-Pad Left/Right Navigation Isolation & In-Modal Cycling
+  function handleDpad(e) {
     var key = e.key;
     var code = e.keyCode || e.which;
-    var isHorizontal = (key === 'ArrowLeft' || key === 'ArrowRight' || code === 37 || code === 39);
 
-    if (isHorizontal) {
+    var isLeft = (key === 'ArrowLeft' || code === 37);
+    var isRight = (key === 'ArrowRight' || code === 39);
+    var isUp = (key === 'ArrowUp' || code === 38);
+    var isDown = (key === 'ArrowDown' || code === 40);
+
+    if (isLeft || isRight || isUp || isDown) {
       if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
-      e.stopImmediatePropagation();
+
+      // In-Modal Cycling
+      if (activeInspectType) {
+        if (isLeft || isRight) {
+          var delta = isRight ? 1 : -1;
+          if (activeInspectType === 'move') {
+            var nextMove = activeInspectIndex + delta;
+            if (nextMove > 4) nextMove = 1;
+            if (nextMove < 1) nextMove = 4;
+            inspectMove(nextMove);
+          } else if (activeInspectType === 'switch') {
+            var nextSwitch = activeInspectIndex + delta;
+            if (nextSwitch > 6) nextSwitch = 1;
+            if (nextSwitch < 1) nextSwitch = 6;
+            inspectPokemon(nextSwitch);
+          }
+        } else if (isUp || isDown) {
+          // Switch between Move Mode, Switch Mode, and Opponent Mode
+          if (activeInspectType === 'move') {
+            inspectPokemon(1);
+          } else if (activeInspectType === 'switch') {
+            inspectOpponent();
+          } else if (activeInspectType === 'opponent') {
+            inspectMove(1);
+          }
+        }
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
+
+      // Neutralize Showdown's room switcher when navigating on-screen buttons
+      if (isLeft || isRight) {
+        e.stopImmediatePropagation();
+      }
     }
   }
 
   ['keydown', 'keyup'].forEach(function(evt) {
-    window.addEventListener(evt, interceptDpad, true);
-    document.addEventListener(evt, interceptDpad, true);
+    window.addEventListener(evt, handleDpad, true);
+    document.addEventListener(evt, handleDpad, true);
   });
 
-  // 2. Hardware Matrix Key Listener
+  // 2. Hardware Matrix Controller
   window.addEventListener('keydown', function(e) {
     if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
 
@@ -170,41 +350,91 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     var code = e.keyCode || e.which;
     var eventCode = e.code;
 
-    // --- CALL (0) / ENTER (13) -> CONFIRM SELECTION ---
+    // --- CALL (0) / ENTER (13) -> EXECUTE ACTION ---
     var isCall = (key === 'Call' || code === 0);
     var isEnter = (key === 'Enter' || code === 13);
 
-    if ((isCall || isEnter) && activeInspectType) {
+    if (isCall || isEnter) {
       if (activeInspectType === 'move') {
         var moveBtn = document.querySelector('button[name="chooseMove"][value="' + activeInspectIndex + '"]') ||
                       document.querySelectorAll('button[name="chooseMove"]')[activeInspectIndex - 1];
         if (moveBtn) moveBtn.click();
+        hideInspector();
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
       } else if (activeInspectType === 'switch') {
         var switchBtn = document.querySelector('button[name="chooseSwitch"][value="' + activeInspectIndex + '"]') ||
                         document.querySelectorAll('button[name="chooseSwitch"]')[activeInspectIndex - 1];
         if (switchBtn) switchBtn.click();
+        hideInspector();
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
       }
-      hideInspector();
+    }
+
+    // --- # (51 / '#') / ESCAPE (27) -> CLOSE POPUPS OR UNDO ---
+    if (key === '#' || key === 'Hash' || key === 'Pound' || key === 'Escape' || code === 27) {
+      if (document.body.classList.contains('cp-chat-visible')) {
+        document.body.classList.remove('cp-chat-visible');
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
+      if (activeInspectType) {
+        hideInspector();
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
+
+      var undoBtn = document.querySelector('button[name="undo"], button[name="clearMove"], button[name="chooseUndo"], button[value="undo"], button[value="cancel"]');
+      if (undoBtn) {
+        undoBtn.click();
+      } else {
+        var room = getBattleRoom();
+        if (room && typeof room.send === 'function') room.send('/undo');
+      }
       e.preventDefault();
       e.stopImmediatePropagation();
       return;
     }
 
-    // --- # (KEY '#' / CODE 51) / ESCAPE (27) -> CLOSE OR UNDO ---
-    if (key === '#' || key === 'Hash' || key === 'Pound' || key === 'Escape' || code === 27) {
+    // --- 0 -> UNIFIED MODAL TOGGLE (INSPECT FOCUSED OR ACTIVE MON/MOVE) ---
+    if (key === '0' || code === 48) {
       if (activeInspectType) {
         hideInspector();
       } else {
-        var undoBtn = document.querySelector('button[name="undo"], button[name="clearMove"], button[name="chooseUndo"], button[value="undo"], button[value="cancel"]');
-        if (undoBtn) {
-          undoBtn.click();
+        var focused = document.activeElement;
+        if (focused && focused.name === 'chooseMove') {
+          inspectMove(focused.value || '1');
+        } else if (focused && focused.name === 'chooseSwitch') {
+          inspectPokemon(focused.value || '1');
         } else {
-          var room = app.curRoom || app.curSideRoom;
-          if (room && typeof room.send === 'function') {
-            room.send('/undo');
-          }
+          inspectMove('1');
         }
       }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
+
+    // --- 1 -> OPPONENT POKEMON & DEFENSIVE PROFILE INSPECTOR ---
+    if (key === '1' || code === 49) {
+      if (activeInspectType === 'opponent') {
+        hideInspector();
+      } else {
+        inspectOpponent();
+      }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
+
+    // --- 9 -> TOGGLE FLOATING CHAT / BATTLE LOG OVERLAY ---
+    if (key === '9' || code === 57) {
+      document.body.classList.toggle('cp-chat-visible');
       e.preventDefault();
       e.stopImmediatePropagation();
       return;
@@ -220,37 +450,11 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       }
       return;
     }
-
-    // --- MOVES (1 - 4) ---
-    if (key === '1' || key === '2' || key === '3' || key === '4') {
-      var moveIndex = key;
-      if (activeInspectType === 'move' && activeInspectIndex === moveIndex) {
-        hideInspector();
-      } else {
-        inspectMove(moveIndex);
-      }
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      return;
-    }
-
-    // --- SWITCH SLOTS (5 - 0 -> Slots 1 - 6) ---
-    var switchMap = { '5': '1', '6': '2', '7': '3', '8': '4', '9': '5', '0': '6' };
-    if (switchMap[key]) {
-      var slotIndex = switchMap[key];
-      if (activeInspectType === 'switch' && activeInspectIndex === slotIndex) {
-        hideInspector();
-      } else {
-        inspectPokemon(slotIndex);
-      }
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      return;
-    }
   }, true);
 
-  // Extract Move Details
+  // Extract Move Details & Multiplier
   function inspectMove(index) {
+    index = Number(index) || 1;
     var moveBtn = document.querySelector('button[name="chooseMove"][value="' + index + '"]') ||
                   document.querySelectorAll('button[name="chooseMove"]')[index - 1];
 
@@ -261,35 +465,48 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     var moveId = rawName.toLowerCase().replace(/[^a-z0-9]/g, '');
     var dexData = (window.BattleMovedex && BattleMovedex[moveId]) ? BattleMovedex[moveId] : (window.Dex && Dex.moves ? Dex.moves.get(rawName) : null);
 
-    var html = '';
+    var foeTypes = getOpponentTypes();
+    var foe = getOpponentActive();
+    var foeName = foe ? (foe.name || foe.species) : 'Opponent';
+
     var moveName = (dexData && dexData.name) || (reqMove && reqMove.move) || rawName;
-    var type = (dexData && dexData.type) || 'Standard';
+    var type = (dexData && dexData.type) || 'Normal';
     var category = (dexData && dexData.category) || '';
     var bp = (dexData && (dexData.basePower || '—')) || '—';
     var acc = (dexData && (dexData.accuracy === true ? '—' : (dexData.accuracy + '%'))) || '—';
-    var ppText = reqMove && reqMove.pp !== undefined ? (reqMove.pp + '/' + reqMove.maxpp) : (moveBtn ? moveBtn.innerText.replace(/\\n/g, ' ') : '—');
+    var ppText = reqMove && reqMove.pp !== undefined ? (reqMove.pp + '/' + reqMove.maxpp) : '—';
 
+    var mult = (category === 'Status') ? 1 : getEffectiveness(type, foeTypes);
+    var effHtml = (category === 'Status') ? '<span class="eff-badge eff-neutral">Status</span>' : formatMultiplierBadge(mult);
+
+    var html = '';
     html += '<div><b>Type:</b> ' + type + ' ' + (category ? '(' + category + ')' : '') + '</div>';
     html += '<div><b>Power:</b> ' + bp + ' &nbsp;|&nbsp; <b>Acc:</b> ' + acc + ' &nbsp;|&nbsp; <b>PP:</b> ' + ppText + '</div>';
+    html += '<div style="margin: 0.8vh 0;"><b>Vs ' + foeName + ' (' + (foeTypes.join('/') || 'Unknown') + '):</b><br>' + effHtml + '</div>';
 
     if (dexData && (dexData.shortDesc || dexData.desc)) {
-      html += '<div style="margin-top:4px;color:#bbb;font-size:10px;">' + (dexData.shortDesc || dexData.desc) + '</div>';
+      html += '<div style="margin-top:0.6vh;color:#bbb;font-size:3.1vw;">' + (dexData.shortDesc || dexData.desc) + '</div>';
     }
 
     if (reqMove && reqMove.disabled) {
-      html += '<div style="color:#ff5555;font-weight:bold;margin-top:2px;">[DISABLED]</div>';
+      html += '<div style="color:#ff5555;font-weight:bold;margin-top:0.5vh;">[DISABLED]</div>';
     }
 
-    showInspector('⚡ [' + index + '] ' + moveName, html, 'move', index);
+    showInspector('⚡ Move ' + index + '/4: ' + moveName, html, 'move', index);
   }
 
-  // Extract Switch Slot Details
+  // Extract Switch Slot Details & Matchup
   function inspectPokemon(slot) {
+    slot = Number(slot) || 1;
     var switchBtn = document.querySelector('button[name="chooseSwitch"][value="' + slot + '"]') ||
                     document.querySelectorAll('button[name="chooseSwitch"]')[slot - 1];
 
     var req = getBattleRequest();
     var mon = req && req.side && req.side.pokemon && req.side.pokemon[slot - 1];
+
+    var foeTypes = getOpponentTypes();
+    var foe = getOpponentActive();
+    var foeName = foe ? (foe.name || foe.species) : 'Opponent';
 
     var name = mon ? mon.details.split(',')[0] : (switchBtn ? switchBtn.innerText.split('\\n')[0] : ('Slot ' + slot));
     var html = '';
@@ -299,20 +516,81 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       if (mon.item) html += '<div><b>Item:</b> ' + mon.item + '</div>';
       if (mon.ability) html += '<div><b>Ability:</b> ' + mon.ability + '</div>';
       if (mon.teraType) html += '<div><b>Tera Type:</b> ' + mon.teraType + '</div>';
+
       if (mon.moves && mon.moves.length) {
-        html += '<div style="margin-top:4px;"><b>Moves:</b> ' + mon.moves.join(', ') + '</div>';
+        html += '<div style="margin-top:0.8vh;border-top:0.2vw solid #333;padding-top:0.5vh;"><b>Bench Moves vs ' + foeName + ':</b></div>';
+        for (var i = 0; i < mon.moves.length; i++) {
+          var mName = mon.moves[i];
+          var mId = mName.toLowerCase().replace(/[^a-z0-9]/g, '');
+          var mData = (window.BattleMovedex && BattleMovedex[mId]) || (window.Dex && Dex.moves ? Dex.moves.get(mName) : null);
+          var mType = (mData && mData.type) || 'Normal';
+          var mCategory = (mData && mData.category) || '';
+          var mult = (mCategory === 'Status') ? 1 : getEffectiveness(mType, foeTypes);
+
+          html += '<div style="font-size:3.1vw;margin:0.2vh 0;">• ' + mName + ' (' + mType + '): ' +
+                  ((mCategory === 'Status') ? '<span style="color:#aaa;">Status</span>' : (mult + '×')) + '</div>';
+        }
       }
-      if (mon.active) html += '<div style="color:#00ffcc;font-weight:bold;margin-top:2px;">[CURRENTLY IN BATTLE]</div>';
+
+      if (mon.active) html += '<div style="color:#00ffcc;font-weight:bold;margin-top:0.5vh;">[CURRENTLY ACTIVE]</div>';
     } else if (switchBtn) {
       html = '<div>' + switchBtn.innerText.replace(/\\n/g, '<br>') + '</div>';
-    } else {
-      html = '<div>No data available for Slot ' + slot + '</div>';
     }
 
-    showInspector('🔄 [Slot ' + slot + '] ' + name, html, 'switch', slot);
+    showInspector('🔄 Switch Slot ' + slot + '/6: ' + name, html, 'switch', slot);
   }
 
-  // 3. Disable Showdown Native Tooltips & Room Switchers
+  // Extract Opponent Stats, Speed, Known Moves, and Defensive Profile
+  function inspectOpponent() {
+    var foe = getOpponentActive();
+    var foeTypes = getOpponentTypes();
+
+    if (!foe) {
+      showInspector('🎯 Opponent', '<div>No active opponent data found in battle state.</div>', 'opponent', 1);
+      return;
+    }
+
+    var species = (foe.species || foe.name || 'Unknown').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    var pDex = (window.BattlePokedex && BattlePokedex[species]) || {};
+    var baseSpe = (pDex.baseStats && pDex.baseStats.spe) || '—';
+
+    // Speed Tier Range at Lv 100
+    var speedRange = '—';
+    if (typeof baseSpe === 'number') {
+      var minSpe = Math.floor((2 * baseSpe + 5) * 0.9);
+      var maxSpe = Math.floor((2 * baseSpe + 99) * 1.1);
+      speedRange = minSpe + ' - ' + maxSpe + ' (Base: ' + baseSpe + ')';
+    }
+
+    // Calculate Defensive Profile against all 18 Types
+    var weak = [], resist = [], immune = [];
+    for (var i = 0; i < TYPE_LIST.length; i++) {
+      var atkT = TYPE_LIST[i];
+      var m = getEffectiveness(atkT, foeTypes);
+      if (m === 0) immune.push(atkT);
+      else if (m > 1) weak.push(atkT + ' (' + m + '×)');
+      else if (m < 1) resist.push(atkT + ' (' + m + '×)');
+    }
+
+    var html = '';
+    html += '<div><b>Types:</b> ' + (foeTypes.join(' / ') || 'Unknown') + '</div>';
+    html += '<div><b>Estimated Speed (Lv100):</b> ' + speedRange + '</div>';
+    if (foe.item) html += '<div><b>Known Item:</b> ' + foe.item + '</div>';
+    if (foe.ability) html += '<div><b>Ability:</b> ' + foe.ability + '</div>';
+
+    if (foe.moves && foe.moves.length) {
+      html += '<div style="margin-top:0.6vh;"><b>Revealed Moves:</b> ' + foe.moves.join(', ') + '</div>';
+    }
+
+    html += '<div style="margin-top:0.8vh;border-top:0.2vw solid #333;padding-top:0.5vh;"><b>Defensive Profile:</b></div>';
+    if (weak.length) html += '<div style="margin:0.2vh 0;"><span style="color:#a5d6a7;font-weight:bold;">Weak:</span> ' + weak.join(', ') + '</div>';
+    if (resist.length) html += '<div style="margin:0.2vh 0;"><span style="color:#ef9a9a;font-weight:bold;">Resist:</span> ' + resist.join(', ') + '</div>';
+    if (immune.length) html += '<div style="margin:0.2vh 0;"><span style="color:#9e9e9e;font-weight:bold;">Immune:</span> ' + immune.join(', ') + '</div>';
+
+    showInspector('🎯 Opponent: ' + (foe.name || foe.species), html, 'opponent', 1);
+  }
+
+  // 3. Neutralize Showdown Tooltips & Room Switchers
   function patchShowdown() {
     if (window.BattleTooltips) {
       BattleTooltips.prototype.showTooltip = function() {};
@@ -340,8 +618,8 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
         ssl: true
       };
       patchShowdown();
-      if (window.app && typeof app.connect === 'function' && !app.connection) {
-        app.connect();
+      if (window.app && typeof app.connect === 'function') {
+        if (!app.connection) app.connect();
         return true;
       }
     } catch (err) {}
