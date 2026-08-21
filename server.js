@@ -28,7 +28,7 @@ const simProxy = httpProxy.createProxyServer({
   ws: true,
 });
 
-// Force upstream uncompressed data for clean script injection
+// Force uncompressed transfer so string/HTML replacement functions reliably
 webProxy.on("proxyReq", (proxyReq) => {
   proxyReq.setHeader("accept-encoding", "identity");
 });
@@ -68,41 +68,44 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
       const injectedHead = `
 <style>
-  /* Suppress default oversized hover tooltips */
-  #tooltipwrapper, .tooltip, .battle-log-tag {
+  /* 1. Neutralize Showdown hover tooltips completely */
+  #tooltipwrapper, .tooltip, .tooltipwrapper, div[class*="tooltip"], .battle-log-tag {
     display: none !important;
     visibility: hidden !important;
     opacity: 0 !important;
     pointer-events: none !important;
+    position: absolute !important;
+    top: -9999px !important;
+    height: 0 !important;
+    width: 0 !important;
   }
 
-  /* High-visibility spatial focus indicator */
+  /* 2. Distinct spatial focus indicator */
   button:focus, a:focus, input:focus, select:focus {
     outline: 3px solid #ffcc00 !important;
     outline-offset: 1px !important;
     box-shadow: 0 0 8px #ffcc00 !important;
   }
 
-  /* Custom 240x320 Compact HUD Inspector */
+  /* 3. QVGA Action Inspector Modal */
   #cp-inspector {
-    display: none;
     position: fixed;
-    top: 36px;
+    top: 28px;
     left: 4px;
     right: 4px;
-    background: rgba(18, 22, 28, 0.96);
-    border: 2px solid #ffcc00;
+    background: rgba(14, 18, 24, 0.98);
+    border: 2px solid #ffd700;
     border-radius: 6px;
-    color: #fff;
+    color: #ffffff;
     padding: 8px;
-    z-index: 999999;
+    z-index: 2147483647;
     font-family: sans-serif;
     font-size: 11px;
     line-height: 1.35;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.8);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.9);
   }
   #cp-inspector-title {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: bold;
     color: #ffd700;
     margin-bottom: 4px;
@@ -127,12 +130,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 `;
 
       const injectedBody = `
-<div id="cp-inspector">
-  <div id="cp-inspector-title">Action Preview</div>
-  <div id="cp-inspector-body">Loading...</div>
-  <div id="cp-inspector-footer">[CALL / OK] Confirm &nbsp;|&nbsp; [#] Close</div>
-</div>
-
 <script>
 (function() {
   try {
@@ -140,20 +137,31 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
   } catch (e) {}
 
   var activeInspectType = null; // 'move' | 'switch'
-  var activeInspectIndex = null; // 1-6
+  var activeInspectIndex = null; // 1 - 6
+
+  function getInspectorEl() {
+    var el = document.getElementById('cp-inspector');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'cp-inspector';
+      el.style.display = 'none';
+      el.innerHTML = '<div id="cp-inspector-title"></div><div id="cp-inspector-body"></div><div id="cp-inspector-footer">[CALL / OK] Confirm &nbsp;|&nbsp; [#] Close</div>';
+      document.body.appendChild(el);
+    }
+    return el;
+  }
 
   function hideInspector() {
-    var el = document.getElementById('cp-inspector');
-    if (el) el.style.display = 'none';
+    var el = getInspectorEl();
+    el.style.display = 'none';
     activeInspectType = null;
     activeInspectIndex = null;
   }
 
   function showInspector(title, bodyHtml, type, index) {
-    var el = document.getElementById('cp-inspector');
+    var el = getInspectorEl();
     var titleEl = document.getElementById('cp-inspector-title');
     var bodyEl = document.getElementById('cp-inspector-body');
-    if (!el || !titleEl || !bodyEl) return;
 
     titleEl.innerHTML = title;
     bodyEl.innerHTML = bodyHtml;
@@ -162,11 +170,23 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     activeInspectIndex = index;
   }
 
-  // 1. Intercept D-Pad Left/Right to preserve native spatial navigation
+  function getBattleRoom() {
+    if (!window.app) return null;
+    if (app.curRoom && app.curRoom.battle) return app.curRoom;
+    if (app.curSideRoom && app.curSideRoom.battle) return app.curSideRoom;
+    if (app.rooms) {
+      for (var k in app.rooms) {
+        if (app.rooms[k] && app.rooms[k].battle) return app.rooms[k];
+      }
+    }
+    return app.curRoom || app.curSideRoom || null;
+  }
+
+  // 1. Horizontal D-Pad Isolation (ArrowLeft: 37, ArrowRight: 39)
   function interceptDpad(e) {
     var key = e.key;
     var code = e.keyCode || e.which;
-    var isHorizontal = (key === 'ArrowLeft' || key === 'ArrowRight' || key === 'Left' || key === 'Right' || code === 37 || code === 39);
+    var isHorizontal = (key === 'ArrowLeft' || key === 'ArrowRight' || code === 37 || code === 39);
 
     if (isHorizontal) {
       if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
@@ -179,25 +199,26 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     document.addEventListener(evt, interceptDpad, true);
   });
 
-  // 2. Keypad Inspector & Confirmation Logic
+  // 2. Hardware Matrix Key Listener
   window.addEventListener('keydown', function(e) {
     if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
 
     var key = e.key;
     var code = e.keyCode || e.which;
+    var eventCode = e.code;
 
-    var isCallOrOk = (
-      key === 'Enter' || key === 'Call' || key === 'F3' ||
-      code === 13 || code === 170 || code === 114
-    );
+    // --- CALL (0) / ENTER (13) -> CONFIRM ---
+    var isCall = (key === 'Call' || code === 0);
+    var isEnter = (key === 'Enter' || code === 13);
 
-    // CONFIRM ACTION via CALL / CENTER KEY
-    if (isCallOrOk && activeInspectType) {
+    if ((isCall || isEnter) && activeInspectType) {
       if (activeInspectType === 'move') {
-        var moveBtn = document.querySelector('button[name="chooseMove"][value="' + activeInspectIndex + '"]');
+        var moveBtn = document.querySelector('button[name="chooseMove"][value="' + activeInspectIndex + '"]') ||
+                      document.querySelectorAll('button[name="chooseMove"]')[activeInspectIndex - 1];
         if (moveBtn) moveBtn.click();
       } else if (activeInspectType === 'switch') {
-        var switchBtn = document.querySelector('button[name="chooseSwitch"][value="' + activeInspectIndex + '"]');
+        var switchBtn = document.querySelector('button[name="chooseSwitch"][value="' + activeInspectIndex + '"]') ||
+                        document.querySelectorAll('button[name="chooseSwitch"]')[activeInspectIndex - 1];
         if (switchBtn) switchBtn.click();
       }
       hideInspector();
@@ -206,30 +227,40 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       return;
     }
 
-    // CLOSE INSPECTOR OR UNDO (#)
-    if (key === '#' || key === 'Escape') {
+    // --- # (KEY '#' / CODE 51) / ESCAPE (27) -> CLOSE OR UNDO ---
+    // Evaluated via key === '#' to prevent colliding with digit '3' (which shares code 51)
+    if (key === '#' || key === 'Hash' || key === 'Pound' || key === 'Escape' || code === 27) {
       if (activeInspectType) {
         hideInspector();
-        e.preventDefault();
       } else {
-        var undo = document.querySelector('button[name="undo"]');
-        if (undo) undo.click();
+        var undoBtn = document.querySelector('button[name="undo"], button[name="clearMove"], button[name="chooseUndo"], button[value="undo"], button[value="cancel"]');
+        if (undoBtn) {
+          undoBtn.click();
+        } else {
+          var room = getBattleRoom();
+          if (room && typeof room.send === 'function') {
+            room.send('/undo');
+          }
+        }
       }
+      e.preventDefault();
+      e.stopImmediatePropagation();
       return;
     }
 
-    // TERA / GIMMICK (*)
-    if (key === '*') {
+    // --- * (106 / NumpadMultiply) -> TERA / GIMMICK ---
+    if (key === '*' || code === 106 || eventCode === 'NumpadMultiply') {
       var tera = document.querySelector('input[name="terastallize"], input[name="megaEvolution"]');
       if (tera) {
         tera.click();
         e.preventDefault();
+        e.stopImmediatePropagation();
       }
       return;
     }
 
-    // MOVES (1 - 4)
-    if (['1', '2', '3', '4'].includes(key)) {
+    // --- MOVES (1 - 4) ---
+    if (key === '1' || key === '2' || key === '3' || key === '4') {
       var moveIndex = key;
       if (activeInspectType === 'move' && activeInspectIndex === moveIndex) {
         hideInspector();
@@ -237,10 +268,11 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
         inspectMove(moveIndex);
       }
       e.preventDefault();
+      e.stopImmediatePropagation();
       return;
     }
 
-    // SWITCHES (5 - 0 -> Slots 1 - 6)
+    // --- SWITCH SLOTS (5 - 0 -> Slots 1 - 6) ---
     var switchMap = { '5': '1', '6': '2', '7': '3', '8': '4', '9': '5', '0': '6' };
     if (switchMap[key]) {
       var slotIndex = switchMap[key];
@@ -250,42 +282,58 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
         inspectPokemon(slotIndex);
       }
       e.preventDefault();
+      e.stopImmediatePropagation();
       return;
     }
-  });
+  }, true);
 
-  // Extract Move Details
+  // Extract Detailed Move Info
   function inspectMove(index) {
-    var moveBtn = document.querySelector('button[name="chooseMove"][value="' + index + '"]');
+    var moveBtn = document.querySelector('button[name="chooseMove"][value="' + index + '"]') ||
+                  document.querySelectorAll('button[name="chooseMove"]')[index - 1];
     if (!moveBtn) return;
 
-    var room = window.app && app.curSideRoom;
+    var room = getBattleRoom();
     var reqMove = room && room.request && room.request.active && room.request.active[0] && room.request.active[0].moves[index - 1];
 
-    var name = moveBtn.getAttribute('data-move') || moveBtn.innerText.split('\\n')[0] || ('Move ' + index);
-    var details = '';
+    var rawName = moveBtn.getAttribute('data-move') || moveBtn.innerText.split('\\n')[0] || ('Move ' + index);
+    var moveId = rawName.toLowerCase().replace(/[^a-z0-9]/g, '');
+    var dexData = (window.BattleMovedex && BattleMovedex[moveId]) ? BattleMovedex[moveId] : null;
 
-    if (reqMove) {
-      details += '<div><b>Move:</b> ' + (reqMove.move || name) + '</div>';
-      details += '<div><b>PP:</b> ' + (reqMove.pp !== undefined ? (reqMove.pp + '/' + reqMove.maxpp) : 'N/A') + '</div>';
-      if (reqMove.target) details += '<div><b>Target:</b> ' + reqMove.target + '</div>';
-      if (reqMove.disabled) details += '<div style="color:#ff5555;"><b>[DISABLED]</b></div>';
+    var html = '';
+    var moveName = dexData ? dexData.name : (reqMove ? reqMove.move : rawName);
+    var type = dexData ? dexData.type : 'Standard';
+    var category = dexData ? dexData.category : '';
+    var bp = dexData ? (dexData.basePower || '—') : '—';
+    var acc = dexData ? (dexData.accuracy === true ? '—' : dexData.accuracy + '%') : '—';
+    var ppText = reqMove && reqMove.pp !== undefined ? (reqMove.pp + '/' + reqMove.maxpp) : '—';
+
+    html += '<div><b>Type:</b> ' + type + ' ' + (category ? '(' + category + ')' : '') + '</div>';
+    html += '<div><b>Power:</b> ' + bp + ' &nbsp;|&nbsp; <b>Acc:</b> ' + acc + ' &nbsp;|&nbsp; <b>PP:</b> ' + ppText + '</div>';
+
+    if (dexData && (dexData.shortDesc || dexData.desc)) {
+      html += '<div style="margin-top:4px;color:#bbb;">' + (dexData.shortDesc || dexData.desc) + '</div>';
     } else {
-      details = '<div>' + moveBtn.innerText.replace(/\\n/g, '<br>') + '</div>';
+      html += '<div style="margin-top:4px;color:#bbb;">' + moveBtn.innerText.replace(/\\n/g, ' ') + '</div>';
     }
 
-    showInspector('⚡ Move ' + index + ': ' + name, details, 'move', index);
+    if (reqMove && reqMove.disabled) {
+      html += '<div style="color:#ff5555;font-weight:bold;margin-top:2px;">[DISABLED]</div>';
+    }
+
+    showInspector('⚡ [' + index + '] ' + moveName, html, 'move', index);
   }
 
-  // Extract Switch Slot Details
+  // Extract Detailed Switch Slot Info
   function inspectPokemon(slot) {
-    var switchBtn = document.querySelector('button[name="chooseSwitch"][value="' + slot + '"]');
+    var switchBtn = document.querySelector('button[name="chooseSwitch"][value="' + slot + '"]') ||
+                    document.querySelectorAll('button[name="chooseSwitch"]')[slot - 1];
     if (!switchBtn) return;
 
-    var room = window.app && app.curSideRoom;
+    var room = getBattleRoom();
     var mon = room && room.request && room.request.side && room.request.side.pokemon && room.request.side.pokemon[slot - 1];
 
-    var name = mon ? (mon.details.split(',')[0]) : ('Slot ' + slot);
+    var name = mon ? mon.details.split(',')[0] : ('Slot ' + slot);
     var html = '';
 
     if (mon) {
@@ -296,22 +344,30 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       if (mon.moves && mon.moves.length) {
         html += '<div style="margin-top:4px;"><b>Moves:</b> ' + mon.moves.join(', ') + '</div>';
       }
-      if (mon.active) html += '<div style="color:#00ffcc;"><b>[CURRENTLY ACTIVE]</b></div>';
+      if (mon.active) html += '<div style="color:#00ffcc;font-weight:bold;margin-top:2px;">[CURRENTLY IN BATTLE]</div>';
     } else {
       html = '<div>' + switchBtn.innerText.replace(/\\n/g, '<br>') + '</div>';
     }
 
-    showInspector('🔄 Slot ' + slot + ': ' + name, html, 'switch', slot);
+    showInspector('🔄 [Slot ' + slot + '] ' + name, html, 'switch', slot);
   }
 
-  // 3. App Patching and Auto-Connect Loop
+  // 3. Disable Showdown Tooltips & Room Switchers
   function patchShowdown() {
+    if (window.BattleTooltips) {
+      BattleTooltips.prototype.showTooltip = function() {};
+      BattleTooltips.prototype.showMoveTooltip = function() {};
+      BattleTooltips.prototype.showPokemonTooltip = function() {};
+      BattleTooltips.prototype.hideTooltip = function() {};
+    }
     if (window.app) {
+      app.showTooltip = function() {};
       app.focusPrevRoom = function() {};
       app.focusNextRoom = function() {};
     }
   }
 
+  // 4. Auto-Connect Polling Loop
   function attemptConnect() {
     try {
       window.Config = window.Config || {};
