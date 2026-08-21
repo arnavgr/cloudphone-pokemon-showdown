@@ -77,18 +77,36 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     position: absolute !important;
   }
 
-  /* 2. Hide on-screen Chat button and default side log */
-  .chat-toggle,
-  .battle-chat-toggle,
+  /* 2. Completely suppress on-screen mobile Chat buttons */
   button[name="openChat"],
   button[name="closeChat"],
   button[name="openBattleLog"],
-  .battle-log {
+  button[name="closeBattleLog"],
+  .battle-chat-toggle,
+  .chat-toggle,
+  .battle-log-toggle,
+  button.battle-chat-toggle,
+  .roomcontrols button[name="openChat"],
+  .roomcontrols button[name="openBattleLog"],
+  .battle-options-menu,
+  [name="openBattleLog"],
+  [name="openChat"] {
     display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+    width: 0 !important;
+    height: 0 !important;
+    position: absolute !important;
+    top: -9999px !important;
+    left: -9999px !important;
   }
 
-  /* 3. Floating Chat Overlay when toggled with Key 9 */
-  body.cp-chat-visible .battle-log {
+  /* 3. Default side chat hidden; floating popup overlay when toggled via Key 9 */
+  .battle-log, .chat-log {
+    display: none !important;
+  }
+  body.cp-chat-visible .battle-log,
+  body.cp-chat-visible .battleroom .battle-log {
     display: flex !important;
     flex-direction: column !important;
     position: fixed !important;
@@ -104,14 +122,15 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     padding: 6px !important;
     box-sizing: border-box !important;
   }
-  body.cp-chat-visible .battle-log .inner {
+  body.cp-chat-visible .battle-log .inner,
+  body.cp-chat-visible .battleroom .battle-log .inner {
     overflow-y: auto !important;
     flex: 1 !important;
     font-size: 10px !important;
     color: #e0e0e0 !important;
   }
 
-  /* 4. Spatial focus ring */
+  /* 4. Spatial focus indicator */
   button:focus, a:focus, input:focus, select:focus {
     outline: 2px solid #ffcc00 !important;
     outline-offset: 1px !important;
@@ -172,9 +191,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     var mult = 1;
     for (var i = 0; i < targetTypes.length; i++) {
       var t = targetTypes[i];
-      if (TYPE_CHART[moveType][t] !== undefined) {
-        mult *= TYPE_CHART[moveType][t];
-      }
+      if (TYPE_CHART[moveType][t] !== undefined) mult *= TYPE_CHART[moveType][t];
     }
     return mult;
   }
@@ -236,11 +253,30 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     return null;
   }
 
+  // Robust Opponent Active Target Resolution
   function getOpponentActive() {
     var room = getBattleRoom();
-    if (!room || !room.battle || !room.battle.foe) return null;
-    var foeActive = room.battle.foe.active;
-    return (foeActive && foeActive[0]) ? foeActive[0] : null;
+    if (!room || !room.battle) return null;
+    var b = room.battle;
+
+    if (b.farSide && b.farSide.active && b.farSide.active[0]) return b.farSide.active[0];
+    if (b.yourSide && b.yourSide.active && b.yourSide.active[0]) return b.yourSide.active[0];
+    if (b.foe && b.foe.active && b.foe.active[0]) return b.foe.active[0];
+
+    if (b.sides && b.sides.length) {
+      var myIndex = (b.mySide && b.mySide.n !== undefined) ? b.mySide.n : 0;
+      var foeIndex = (myIndex === 0) ? 1 : 0;
+      if (b.sides[foeIndex] && b.sides[foeIndex].active && b.sides[foeIndex].active[0]) {
+        return b.sides[foeIndex].active[0];
+      }
+    }
+
+    if (b.p1 && b.p2) {
+      var mySideId = b.mySide ? b.mySide.id : 'p1';
+      var foeObj = (mySideId === 'p1') ? b.p2 : b.p1;
+      if (foeObj && foeObj.active && foeObj.active[0]) return foeObj.active[0];
+    }
+    return null;
   }
 
   function getOpponentTypes() {
@@ -249,68 +285,27 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     if (foe.terastallized || foe.teraType) return [foe.teraType || foe.terastallized];
     if (foe.types && foe.types.length) return foe.types;
     if (foe.speciesData && foe.speciesData.types) return foe.speciesData.types;
-    var species = (foe.species || foe.name || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-    if (window.BattlePokedex && BattlePokedex[species] && BattlePokedex[species].types) {
-      return BattlePokedex[species].types;
+
+    var raw = (foe.species || foe.name || '').replace(/^p[12]:\s*/i, '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    if (window.BattlePokedex && BattlePokedex[raw] && BattlePokedex[raw].types) {
+      return BattlePokedex[raw].types;
+    }
+    if (window.Dex && Dex.species && Dex.species.get(raw)) {
+      return Dex.species.get(raw).types || [];
     }
     return [];
   }
 
-  // 1. D-Pad Left/Right Isolation & Modal Cycling
-  function handleDpad(e) {
-    var key = e.key;
+  // 1. Keyup Listener (Neutralize bubbling on release without executing actions)
+  window.addEventListener('keyup', function(e) {
     var code = e.keyCode || e.which;
-
-    var isLeft = (key === 'ArrowLeft' || code === 37);
-    var isRight = (key === 'ArrowRight' || code === 39);
-    var isUp = (key === 'ArrowUp' || code === 38);
-    var isDown = (key === 'ArrowDown' || code === 40);
-
-    if (isLeft || isRight || isUp || isDown) {
-      if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
-
-      // In-Modal Cycling
-      if (activeInspectType) {
-        if (isLeft || isRight) {
-          var delta = isRight ? 1 : -1;
-          if (activeInspectType === 'move') {
-            var nextMove = activeInspectIndex + delta;
-            if (nextMove > 4) nextMove = 1;
-            if (nextMove < 1) nextMove = 4;
-            inspectMove(nextMove);
-          } else if (activeInspectType === 'switch') {
-            var nextSwitch = activeInspectIndex + delta;
-            if (nextSwitch > 6) nextSwitch = 1;
-            if (nextSwitch < 1) nextSwitch = 6;
-            inspectPokemon(nextSwitch);
-          }
-        } else if (isUp || isDown) {
-          if (activeInspectType === 'move') {
-            inspectPokemon(1);
-          } else if (activeInspectType === 'switch') {
-            inspectOpponent();
-          } else if (activeInspectType === 'opponent') {
-            inspectMove(1);
-          }
-        }
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        return;
-      }
-
-      // Neutralize Showdown's room switcher when navigating on-screen buttons
-      if (isLeft || isRight) {
-        e.stopImmediatePropagation();
-      }
+    var isHorizontal = (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || code === 37 || code === 39);
+    if (isHorizontal) {
+      e.stopImmediatePropagation();
     }
-  }
+  }, true);
 
-  ['keydown', 'keyup'].forEach(function(evt) {
-    window.addEventListener(evt, handleDpad, true);
-    document.addEventListener(evt, handleDpad, true);
-  });
-
-  // 2. Hardware Matrix Controller
+  // 2. Single Unified Keydown Controller (Fixes multi-step D-Pad over-triggering)
   window.addEventListener('keydown', function(e) {
     if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
 
@@ -318,7 +313,46 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     var code = e.keyCode || e.which;
     var eventCode = e.code;
 
-    // --- CALL (0) / ENTER (13) -> EXECUTE ACTION ---
+    var isLeft = (key === 'ArrowLeft' || code === 37);
+    var isRight = (key === 'ArrowRight' || code === 39);
+    var isUp = (key === 'ArrowUp' || code === 38);
+    var isDown = (key === 'ArrowDown' || code === 40);
+
+    // D-PAD IN-MODAL CYCLING
+    if (activeInspectType && (isLeft || isRight || isUp || isDown)) {
+      if (isLeft || isRight) {
+        var delta = isRight ? 1 : -1;
+        if (activeInspectType === 'move') {
+          var nextMove = activeInspectIndex + delta;
+          if (nextMove > 4) nextMove = 1;
+          if (nextMove < 1) nextMove = 4;
+          inspectMove(nextMove);
+        } else if (activeInspectType === 'switch') {
+          var nextSwitch = activeInspectIndex + delta;
+          if (nextSwitch > 6) nextSwitch = 1;
+          if (nextSwitch < 1) nextSwitch = 6;
+          inspectPokemon(nextSwitch);
+        }
+      } else if (isUp || isDown) {
+        if (activeInspectType === 'move') {
+          inspectPokemon(1);
+        } else if (activeInspectType === 'switch') {
+          inspectOpponent();
+        } else if (activeInspectType === 'opponent') {
+          inspectMove(1);
+        }
+      }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
+
+    // Horizontal Spatial Navigation Isolation (Modal closed)
+    if (isLeft || isRight) {
+      e.stopImmediatePropagation();
+    }
+
+    // --- CALL (0) / ENTER (13) -> EXECUTE ---
     var isCall = (key === 'Call' || code === 0);
     var isEnter = (key === 'Enter' || code === 13);
 
@@ -342,7 +376,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       }
     }
 
-    // --- # (51 / '#') / ESCAPE (27) -> CLOSE POPUPS OR UNDO ---
+    // --- # (51 / '#') / ESCAPE (27) -> CLOSE OR UNDO ---
     if (key === '#' || key === 'Hash' || key === 'Pound' || key === 'Escape' || code === 27) {
       if (document.body.classList.contains('cp-chat-visible')) {
         document.body.classList.remove('cp-chat-visible');
@@ -369,7 +403,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       return;
     }
 
-    // --- 0 -> UNIFIED MODAL TOGGLE (INSPECT FOCUSED MON/MOVE) ---
+    // --- 0 -> UNIFIED MODAL TOGGLE ---
     if (key === '0' || code === 48) {
       if (activeInspectType) {
         hideInspector();
@@ -388,7 +422,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       return;
     }
 
-    // --- 1 -> OPPONENT PROFILE INSPECTOR ---
+    // --- 1 -> OPPONENT INSPECTOR ---
     if (key === '1' || code === 49) {
       if (activeInspectType === 'opponent') {
         hideInspector();
@@ -400,7 +434,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       return;
     }
 
-    // --- 9 -> TOGGLE FLOATING CHAT / BATTLE LOG OVERLAY ---
+    // --- 9 -> TOGGLE FLOATING CHAT OVERLAY ---
     if (key === '9' || code === 57) {
       document.body.classList.toggle('cp-chat-visible');
       e.preventDefault();
@@ -420,7 +454,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     }
   }, true);
 
-  // Extract Move Details & Multiplier
+  // Extract Move Details & Multipliers
   function inspectMove(index) {
     index = Number(index) || 1;
     var moveBtn = document.querySelector('button[name="chooseMove"][value="' + index + '"]') ||
@@ -435,7 +469,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
     var foeTypes = getOpponentTypes();
     var foe = getOpponentActive();
-    var foeName = foe ? (foe.name || foe.species) : 'Opponent';
+    var foeName = foe ? (foe.name || foe.species || 'Opponent').replace(/^p[12]:\s*/i, '') : 'Opponent';
 
     var moveName = (dexData && dexData.name) || (reqMove && reqMove.move) || rawName;
     var type = (dexData && dexData.type) || 'Normal';
@@ -463,7 +497,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     showInspector('⚡ Move ' + index + '/4: ' + moveName, html, 'move', index);
   }
 
-  // Extract Switch Slot Details & Matchup
+  // Extract Switch Slot Details & Matchups
   function inspectPokemon(slot) {
     slot = Number(slot) || 1;
     var switchBtn = document.querySelector('button[name="chooseSwitch"][value="' + slot + '"]') ||
@@ -474,7 +508,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
     var foeTypes = getOpponentTypes();
     var foe = getOpponentActive();
-    var foeName = foe ? (foe.name || foe.species) : 'Opponent';
+    var foeName = foe ? (foe.name || foe.species || 'Opponent').replace(/^p[12]:\s*/i, '') : 'Opponent';
 
     var name = mon ? mon.details.split(',')[0] : (switchBtn ? switchBtn.innerText.split('\\n')[0] : ('Slot ' + slot));
     var html = '';
@@ -510,7 +544,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     showInspector('🔄 Switch Slot ' + slot + '/6: ' + name, html, 'switch', slot);
   }
 
-  // Extract Opponent Stats, Speed, Known Moves, and Defensive Profile
+  // Extract Opponent Defensive Profile & Speed Range
   function inspectOpponent() {
     var foe = getOpponentActive();
     var foeTypes = getOpponentTypes();
@@ -520,9 +554,10 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       return;
     }
 
-    var species = (foe.species || foe.name || 'Unknown').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-    var pDex = (window.BattlePokedex && BattlePokedex[species]) || {};
-    var baseSpe = (pDex.baseStats && pDex.baseStats.spe) || '—';
+    var cleanName = (foe.name || foe.species || 'Unknown').replace(/^p[12]:\s*/i, '');
+    var speciesKey = cleanName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    var pDex = (window.BattlePokedex && BattlePokedex[speciesKey]) || (window.Dex && Dex.species ? Dex.species.get(speciesKey) : {});
+    var baseSpe = (pDex.baseStats && pDex.baseStats.spe) || (pDex.spe) || '—';
 
     var speedRange = '—';
     if (typeof baseSpe === 'number') {
@@ -555,11 +590,17 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     if (resist.length) html += '<div style="margin:1px 0;"><span style="color:#ef9a9a;font-weight:bold;">Resist:</span> ' + resist.join(', ') + '</div>';
     if (immune.length) html += '<div style="margin:1px 0;"><span style="color:#9e9e9e;font-weight:bold;">Immune:</span> ' + immune.join(', ') + '</div>';
 
-    showInspector('🎯 Opponent: ' + (foe.name || foe.species), html, 'opponent', 1);
+    showInspector('🎯 Opponent: ' + cleanName, html, 'opponent', 1);
   }
 
-  // 3. Neutralize Showdown Tooltips & Room Switchers
+  // 3. Automated DOM Cleanup & Tooltip Neutralization
   function patchShowdown() {
+    // Purge on-screen chat toggle buttons
+    var chatBtns = document.querySelectorAll('button[name="openChat"], button[name="openBattleLog"], button.battle-chat-toggle, .battle-chat-toggle');
+    for (var i = 0; i < chatBtns.length; i++) {
+      chatBtns[i].style.setProperty('display', 'none', 'important');
+    }
+
     if (window.BattleTooltips) {
       BattleTooltips.prototype.showTooltip = function() {};
       BattleTooltips.prototype.showMoveTooltip = function() {};
