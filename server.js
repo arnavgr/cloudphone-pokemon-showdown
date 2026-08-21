@@ -99,7 +99,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     left: -9999px !important;
   }
 
-  /* 3. Hide side chat log in normal view */
+  /* 3. Hide background side chat log */
   .battle-log, .chat-log {
     display: none !important;
   }
@@ -111,7 +111,20 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     box-shadow: 0 0 6px #ffcc00 !important;
   }
 
-  /* 5. Effectiveness Badges */
+  /* 5. Chat Modal Internal Styling */
+  #cp-chat-content .chat {
+    padding: 2px 0 !important;
+    border-bottom: 1px solid rgba(255,255,255,0.05) !important;
+  }
+  #cp-chat-content .chat strong {
+    color: #ffd700 !important;
+  }
+  #cp-chat-content .battle-history {
+    color: #88a0b8 !important;
+    font-style: italic !important;
+  }
+
+  /* 6. Effectiveness Badges */
   .eff-badge {
     display: inline-block;
     padding: 1px 4px;
@@ -136,6 +149,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
   var activeInspectType = null; // 'move' | 'switch' | 'opponent'
   var activeInspectIndex = 1;
+  var chatSyncTimer = null;
 
   var TYPE_LIST = ['Normal','Fire','Water','Electric','Grass','Ice','Fighting','Poison','Ground','Flying','Psychic','Bug','Rock','Ghost','Dragon','Dark','Steel','Fairy'];
 
@@ -210,15 +224,29 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     activeInspectIndex = Number(index) || 1;
   }
 
-  // --- FLOATING CHAT MODAL (KEY 9) ---
+  // --- FLOATING CHAT & LOG MODAL (KEY 9) ---
   function getChatModalEl() {
     var el = document.getElementById('cp-chat-modal');
     if (!el) {
       el = document.createElement('div');
       el.id = 'cp-chat-modal';
-      el.style.cssText = 'position:fixed!important;top:50%!important;left:50%!important;transform:translate(-50%,-50%)!important;width:224px!important;height:275px!important;background:#0c1016!important;border:2px solid #00ffcc!important;border-radius:6px!important;color:#e0e0e0!important;padding:6px!important;z-index:2147483646!important;font-family:sans-serif!important;font-size:10px!important;line-height:1.3!important;box-shadow:0 0 20px rgba(0,0,0,0.95)!important;box-sizing:border-box!important;display:none;flex-direction:column!important;';
-      el.innerHTML = '<div style="font-size:11px;font-weight:bold;color:#00ffcc;border-bottom:1px solid #333;padding-bottom:2px;margin-bottom:4px;">💬 Battle Chat & Log</div><div id="cp-chat-content" style="flex:1!important;overflow-y:auto!important;margin-bottom:4px;word-break:break-word;"></div><div style="font-size:9px;color:#aaa;text-align:center;border-top:1px solid #333;padding-top:2px;">[9] or [#] to Close</div>';
+      el.style.cssText = 'position:fixed!important;top:50%!important;left:50%!important;transform:translate(-50%,-50%)!important;width:228px!important;height:280px!important;background:#0c1016!important;border:2px solid #00ffcc!important;border-radius:6px!important;color:#e0e0e0!important;padding:6px!important;z-index:2147483646!important;font-family:sans-serif!important;font-size:10px!important;line-height:1.3!important;box-shadow:0 0 25px rgba(0,0,0,0.98)!important;box-sizing:border-box!important;display:none;flex-direction:column!important;';
+      el.innerHTML = '<div style="font-size:11px;font-weight:bold;color:#00ffcc;border-bottom:1px solid #333;padding-bottom:2px;margin-bottom:4px;display:flex;justify-content:space-between;"><span>💬 Battle Chat & Log</span><span style="color:#888;font-size:9px;">[#] Close</span></div>' +
+                     '<div id="cp-chat-content" style="flex:1!important;overflow-y:auto!important;margin-bottom:6px;padding-right:2px;word-break:break-word;"></div>' +
+                     '<form id="cp-chat-form" style="display:flex;gap:3px;margin:0;padding:0;">' +
+                       '<input type="text" id="cp-chat-input" placeholder="Type msg..." style="flex:1;min-width:0;background:#18202c;border:1px solid #00ffcc;border-radius:3px;color:#fff;font-size:10px;padding:3px 5px;box-sizing:border-box;" />' +
+                       '<button type="submit" style="background:#00aa88;border:none;border-radius:3px;color:#fff;font-size:9px;font-weight:bold;padding:0 6px;cursor:pointer;">Send</button>' +
+                     '</form>' +
+                     '<div style="font-size:8px;color:#777;text-align:center;margin-top:3px;">[D-Pad Up/Down] Scroll &nbsp;|&nbsp; [OK] Type/Send</div>';
       document.body.appendChild(el);
+
+      var form = document.getElementById('cp-chat-form');
+      if (form) {
+        form.addEventListener('submit', function(ev) {
+          ev.preventDefault();
+          submitChatMessage();
+        });
+      }
     }
     return el;
   }
@@ -228,9 +256,62 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     return el && el.style.display === 'flex';
   }
 
+  function syncChatContent() {
+    var contentEl = document.getElementById('cp-chat-content');
+    if (!contentEl) return;
+
+    var logSources = [
+      document.querySelector('.battle-log .inner'),
+      document.querySelector('.battle-log'),
+      document.querySelector('.chat-log .inner'),
+      document.querySelector('.chat-log')
+    ];
+
+    var sourceEl = null;
+    for (var i = 0; i < logSources.length; i++) {
+      if (logSources[i] && logSources[i].innerHTML.trim().length > 0) {
+        sourceEl = logSources[i];
+        break;
+      }
+    }
+
+    if (sourceEl) {
+      var isNearBottom = (contentEl.scrollHeight - contentEl.scrollTop - contentEl.clientHeight) < 50;
+      if (contentEl.innerHTML !== sourceEl.innerHTML) {
+        contentEl.innerHTML = sourceEl.innerHTML;
+        if (isNearBottom) {
+          contentEl.scrollTop = contentEl.scrollHeight;
+        }
+      }
+    } else if (contentEl.children.length === 0) {
+      contentEl.innerHTML = '<div style="color:#777;padding:12px 0;text-align:center;">No battle log or messages yet.</div>';
+    }
+  }
+
+  function submitChatMessage() {
+    var input = document.getElementById('cp-chat-input');
+    if (!input) return;
+    var msg = input.value.trim();
+    if (!msg) return;
+
+    var room = getBattleRoom();
+    if (room && typeof room.send === 'function') {
+      room.send(msg);
+    } else if (window.app && typeof app.send === 'function') {
+      app.send(msg);
+    }
+
+    input.value = '';
+    setTimeout(syncChatContent, 100);
+  }
+
   function hideChatModal() {
     var el = getChatModalEl();
     el.style.setProperty('display', 'none', 'important');
+    if (chatSyncTimer) {
+      clearInterval(chatSyncTimer);
+      chatSyncTimer = null;
+    }
   }
 
   function toggleChatModal() {
@@ -241,17 +322,14 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       return;
     }
 
-    var contentEl = document.getElementById('cp-chat-content');
-    var existingLog = document.querySelector('.battle-log .inner') || document.querySelector('.battle-log') || document.querySelector('.chat-log');
-
-    if (existingLog && contentEl) {
-      contentEl.innerHTML = existingLog.innerHTML;
-    } else if (contentEl) {
-      contentEl.innerHTML = '<div style="color:#777;padding:10px 0;text-align:center;">No log or chat entries recorded.</div>';
-    }
-
     el.style.setProperty('display', 'flex', 'important');
+    syncChatContent();
+    var contentEl = document.getElementById('cp-chat-content');
     if (contentEl) contentEl.scrollTop = contentEl.scrollHeight;
+
+    if (!chatSyncTimer) {
+      chatSyncTimer = setInterval(syncChatContent, 400);
+    }
   }
 
   function getBattleRoom() {
@@ -315,7 +393,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     return [];
   }
 
-  // 1. Release Isolation (Neutralizes bubbling on key release)
+  // 1. Release Isolation
   window.addEventListener('keyup', function(e) {
     var code = e.keyCode || e.which;
     var isHorizontal = (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || code === 37 || code === 39);
@@ -324,10 +402,8 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     }
   }, true);
 
-  // 2. Single Unified Keydown Controller
+  // 2. Hardware Controller
   window.addEventListener('keydown', function(e) {
-    if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
-
     var key = e.key;
     var code = e.keyCode || e.which;
     var eventCode = e.code;
@@ -336,8 +412,64 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     var isRight = (key === 'ArrowRight' || code === 39);
     var isUp = (key === 'ArrowUp' || code === 38);
     var isDown = (key === 'ArrowDown' || code === 40);
+    var isCall = (key === 'Call' || code === 0);
+    var isEnter = (key === 'Enter' || code === 13);
+    var isHashOrEscape = (key === '#' || key === 'Hash' || key === 'Pound' || key === 'Escape' || code === 27);
 
-    // D-PAD IN-MODAL CYCLING
+    // --- CHAT MODAL INTERACTION ---
+    if (isChatModalOpen()) {
+      var chatInput = document.getElementById('cp-chat-input');
+      var contentEl = document.getElementById('cp-chat-content');
+
+      // If user is currently focused in chat input
+      if (document.activeElement === chatInput) {
+        if (isEnter || isCall) {
+          submitChatMessage();
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          return;
+        }
+        if (isHashOrEscape) {
+          chatInput.blur();
+          hideChatModal();
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          return;
+        }
+        return; // Allow standard text typing
+      }
+
+      // If user is navigating the chat modal (not typed in input)
+      if (isUp && contentEl) {
+        contentEl.scrollTop -= 40;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
+      if (isDown && contentEl) {
+        contentEl.scrollTop += 40;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
+      if (isEnter || isCall) {
+        if (chatInput) chatInput.focus();
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
+      if (isHashOrEscape || key === '9' || code === 57 || eventCode === 'Digit9' || eventCode === 'Numpad9') {
+        hideChatModal();
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
+    }
+
+    // Ignore other global shortcuts if user is typing elsewhere
+    if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+
+    // --- D-PAD IN-MODAL CYCLING ---
     if (activeInspectType && (isLeft || isRight || isUp || isDown)) {
       if (isLeft || isRight) {
         var delta = isRight ? 1 : -1;
@@ -371,10 +503,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       e.stopImmediatePropagation();
     }
 
-    // --- CALL (0) / ENTER (13) -> EXECUTE ---
-    var isCall = (key === 'Call' || code === 0);
-    var isEnter = (key === 'Enter' || code === 13);
-
+    // --- CALL / ENTER -> EXECUTE ACTION ---
     if (isCall || isEnter) {
       if (activeInspectType === 'move') {
         var moveBtn = document.querySelector('button[name="chooseMove"][value="' + activeInspectIndex + '"]') ||
@@ -395,14 +524,8 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       }
     }
 
-    // --- # (51 / '#') / ESCAPE (27) -> CLOSE OR UNDO ---
-    if (key === '#' || key === 'Hash' || key === 'Pound' || key === 'Escape' || code === 27) {
-      if (isChatModalOpen()) {
-        hideChatModal();
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        return;
-      }
+    // --- # / ESCAPE -> CLOSE INSPECTOR OR UNDO ---
+    if (isHashOrEscape) {
       if (activeInspectType) {
         hideInspector();
         e.preventDefault();
@@ -453,7 +576,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       return;
     }
 
-    // --- 9 -> TOGGLE FLOATING CHAT MODAL ---
+    // --- 9 -> TOGGLE FLOATING CHAT & LOG MODAL ---
     if (key === '9' || code === 57 || eventCode === 'Digit9' || eventCode === 'Numpad9') {
       toggleChatModal();
       e.preventDefault();
@@ -461,7 +584,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       return;
     }
 
-    // --- * (106 / NumpadMultiply) -> TERA / GIMMICK ---
+    // --- * -> TERA / GIMMICK ---
     if (key === '*' || code === 106 || eventCode === 'NumpadMultiply') {
       var tera = document.querySelector('input[name="terastallize"], input[name="megaEvolution"]');
       if (tera) {
@@ -614,7 +737,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
   // 3. Automated DOM Sweeper & Tooltip Neutralization
   function patchShowdown() {
-    // Purge and delete on-screen chat toggle buttons
     var chatElements = document.querySelectorAll('button[name="openChat"], button[name="openBattleLog"], button.battle-chat-toggle, .battle-chat-toggle, .chat-toggle');
     for (var i = 0; i < chatElements.length; i++) {
       chatElements[i].remove();
@@ -633,9 +755,9 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     }
   }
 
-  // 4. Active Sweeper & Auto-Connect Polling Loop
   setInterval(patchShowdown, 250);
 
+  // 4. Auto-Connect Polling Loop
   function attemptConnect() {
     try {
       window.Config = window.Config || {};
@@ -771,7 +893,7 @@ app.use((req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. Native WebSocket Upgrade Listener
+// 4. WebSocket Upgrade Listener
 // ---------------------------------------------------------------------------
 const server = http.createServer(app);
 
