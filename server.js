@@ -77,87 +77,55 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     position: absolute !important;
   }
 
-  /* 2. Hide chat by default; render as a floating overlay popup when toggled */
-  .battle-log, .chat-log, .battle-chat-toggle {
+  /* 2. Hide on-screen Chat button and default side log */
+  .chat-toggle,
+  .battle-chat-toggle,
+  button[name="openChat"],
+  button[name="closeChat"],
+  button[name="openBattleLog"],
+  .battle-log {
     display: none !important;
   }
+
+  /* 3. Floating Chat Overlay when toggled with Key 9 */
   body.cp-chat-visible .battle-log {
     display: flex !important;
     flex-direction: column !important;
     position: fixed !important;
-    top: 6vh !important;
-    left: 3vw !important;
-    width: 94vw !important;
-    height: 84vh !important;
-    z-index: 2000000 !important;
+    top: 10px !important;
+    left: 8px !important;
+    width: 224px !important;
+    height: 275px !important;
+    z-index: 2147483640 !important;
     background: rgba(12, 16, 22, 0.98) !important;
-    border: 0.8vw solid #00ffcc !important;
-    border-radius: 2vw !important;
-    box-shadow: 0 0 6vw rgba(0,0,0,0.95) !important;
-    padding: 2vw !important;
+    border: 2px solid #00ffcc !important;
+    border-radius: 6px !important;
+    box-shadow: 0 0 20px rgba(0,0,0,0.95) !important;
+    padding: 6px !important;
     box-sizing: border-box !important;
   }
   body.cp-chat-visible .battle-log .inner {
     overflow-y: auto !important;
     flex: 1 !important;
-    font-size: 3.2vw !important;
-  }
-
-  /* 3. Spatial focus ring */
-  button:focus, a:focus, input:focus, select:focus {
-    outline: 0.8vw solid #ffcc00 !important;
-    outline-offset: 0.4vw !important;
-    box-shadow: 0 0 2vw #ffcc00 !important;
-  }
-
-  /* 4. Responsive Viewport (vw/vh) Compact Modal */
-  #cp-inspector {
-    position: fixed !important;
-    top: 6vh !important;
-    left: 3vw !important;
-    width: 94vw !important;
-    max-height: 86vh !important;
-    background: rgba(14, 18, 26, 0.98) !important;
-    border: 0.8vw solid #ffd700 !important;
-    border-radius: 2vw !important;
-    color: #ffffff !important;
-    padding: 2.5vw !important;
-    z-index: 2147483647 !important;
-    font-family: sans-serif !important;
-    font-size: 3.4vw !important;
-    line-height: 1.35 !important;
-    box-shadow: 0 0 5vw rgba(0,0,0,0.95) !important;
-    box-sizing: border-box !important;
-    display: none;
-    overflow-y: auto !important;
-  }
-  #cp-insp-title {
-    font-size: 3.8vw !important;
-    font-weight: bold !important;
-    color: #ffd700 !important;
-    margin-bottom: 1vh !important;
-    border-bottom: 0.3vw solid #444 !important;
-    padding-bottom: 0.6vh !important;
-  }
-  #cp-insp-body {
+    font-size: 10px !important;
     color: #e0e0e0 !important;
-    margin-bottom: 1.2vh !important;
   }
-  #cp-insp-footer {
-    font-size: 2.9vw !important;
-    color: #00ffcc !important;
-    font-weight: bold !important;
-    text-align: center !important;
-    border-top: 0.3vw solid #333 !important;
-    padding-top: 0.8vh !important;
+
+  /* 4. Spatial focus ring */
+  button:focus, a:focus, input:focus, select:focus {
+    outline: 2px solid #ffcc00 !important;
+    outline-offset: 1px !important;
+    box-shadow: 0 0 6px #ffcc00 !important;
   }
+
+  /* 5. Effectiveness Badges */
   .eff-badge {
     display: inline-block;
-    padding: 0.2vh 1.2vw;
-    border-radius: 1vw;
+    padding: 1px 4px;
+    border-radius: 3px;
     font-weight: bold;
-    font-size: 2.9vw;
-    margin: 0.2vh 0.4vw;
+    font-size: 10px;
+    margin: 1px 2px;
   }
   .eff-super { background: #1b5e20; color: #a5d6a7; border: 1px solid #4caf50; }
   .eff-neutral { background: #37474f; color: #eceff1; }
@@ -223,7 +191,8 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     if (!el) {
       el = document.createElement('div');
       el.id = 'cp-inspector';
-      el.innerHTML = '<div id="cp-insp-title"></div><div id="cp-insp-body"></div><div id="cp-insp-footer">[CALL/OK] Use | [D-Pad] Cycle | [#] Close</div>';
+      el.style.cssText = 'position:fixed!important;top:50%!important;left:50%!important;transform:translate(-50%,-50%)!important;width:224px!important;max-height:275px!important;background:#0e121a!important;border:2px solid #ffd700!important;border-radius:6px!important;color:#fff!important;padding:8px!important;z-index:2147483647!important;font-family:sans-serif!important;font-size:11px!important;line-height:1.35!important;box-shadow:0 0 20px rgba(0,0,0,0.95)!important;box-sizing:border-box!important;display:none;overflow-y:auto!important;';
+      el.innerHTML = '<div id="cp-insp-title" style="font-size:12px;font-weight:bold;color:#ffd700;margin-bottom:4px;border-bottom:1px solid #333;padding-bottom:2px;"></div><div id="cp-insp-body" style="color:#e0e0e0;margin-bottom:6px;"></div><div id="cp-insp-footer" style="font-size:10px;color:#00ffcc;font-weight:bold;text-align:center;border-top:1px solid #333;padding-top:4px;">[CALL/OK] Use | [D-Pad] Cycle | [#] Close</div>';
       document.body.appendChild(el);
     }
     return el;
@@ -287,7 +256,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     return [];
   }
 
-  // 1. D-Pad Left/Right Navigation Isolation & In-Modal Cycling
+  // 1. D-Pad Left/Right Isolation & Modal Cycling
   function handleDpad(e) {
     var key = e.key;
     var code = e.keyCode || e.which;
@@ -316,7 +285,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
             inspectPokemon(nextSwitch);
           }
         } else if (isUp || isDown) {
-          // Switch between Move Mode, Switch Mode, and Opponent Mode
           if (activeInspectType === 'move') {
             inspectPokemon(1);
           } else if (activeInspectType === 'switch') {
@@ -401,7 +369,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       return;
     }
 
-    // --- 0 -> UNIFIED MODAL TOGGLE (INSPECT FOCUSED OR ACTIVE MON/MOVE) ---
+    // --- 0 -> UNIFIED MODAL TOGGLE (INSPECT FOCUSED MON/MOVE) ---
     if (key === '0' || code === 48) {
       if (activeInspectType) {
         hideInspector();
@@ -420,7 +388,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       return;
     }
 
-    // --- 1 -> OPPONENT POKEMON & DEFENSIVE PROFILE INSPECTOR ---
+    // --- 1 -> OPPONENT PROFILE INSPECTOR ---
     if (key === '1' || code === 49) {
       if (activeInspectType === 'opponent') {
         hideInspector();
@@ -482,14 +450,14 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     var html = '';
     html += '<div><b>Type:</b> ' + type + ' ' + (category ? '(' + category + ')' : '') + '</div>';
     html += '<div><b>Power:</b> ' + bp + ' &nbsp;|&nbsp; <b>Acc:</b> ' + acc + ' &nbsp;|&nbsp; <b>PP:</b> ' + ppText + '</div>';
-    html += '<div style="margin: 0.8vh 0;"><b>Vs ' + foeName + ' (' + (foeTypes.join('/') || 'Unknown') + '):</b><br>' + effHtml + '</div>';
+    html += '<div style="margin: 4px 0;"><b>Vs ' + foeName + ' (' + (foeTypes.join('/') || 'Unknown') + '):</b><br>' + effHtml + '</div>';
 
     if (dexData && (dexData.shortDesc || dexData.desc)) {
-      html += '<div style="margin-top:0.6vh;color:#bbb;font-size:3.1vw;">' + (dexData.shortDesc || dexData.desc) + '</div>';
+      html += '<div style="margin-top:4px;color:#bbb;font-size:10px;">' + (dexData.shortDesc || dexData.desc) + '</div>';
     }
 
     if (reqMove && reqMove.disabled) {
-      html += '<div style="color:#ff5555;font-weight:bold;margin-top:0.5vh;">[DISABLED]</div>';
+      html += '<div style="color:#ff5555;font-weight:bold;margin-top:2px;">[DISABLED]</div>';
     }
 
     showInspector('⚡ Move ' + index + '/4: ' + moveName, html, 'move', index);
@@ -518,7 +486,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       if (mon.teraType) html += '<div><b>Tera Type:</b> ' + mon.teraType + '</div>';
 
       if (mon.moves && mon.moves.length) {
-        html += '<div style="margin-top:0.8vh;border-top:0.2vw solid #333;padding-top:0.5vh;"><b>Bench Moves vs ' + foeName + ':</b></div>';
+        html += '<div style="margin-top:4px;border-top:1px solid #333;padding-top:3px;"><b>Bench Moves vs ' + foeName + ':</b></div>';
         for (var i = 0; i < mon.moves.length; i++) {
           var mName = mon.moves[i];
           var mId = mName.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -527,14 +495,16 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
           var mCategory = (mData && mData.category) || '';
           var mult = (mCategory === 'Status') ? 1 : getEffectiveness(mType, foeTypes);
 
-          html += '<div style="font-size:3.1vw;margin:0.2vh 0;">• ' + mName + ' (' + mType + '): ' +
+          html += '<div style="font-size:10px;margin:1px 0;">• ' + mName + ' (' + mType + '): ' +
                   ((mCategory === 'Status') ? '<span style="color:#aaa;">Status</span>' : (mult + '×')) + '</div>';
         }
       }
 
-      if (mon.active) html += '<div style="color:#00ffcc;font-weight:bold;margin-top:0.5vh;">[CURRENTLY ACTIVE]</div>';
+      if (mon.active) html += '<div style="color:#00ffcc;font-weight:bold;margin-top:2px;">[CURRENTLY ACTIVE]</div>';
     } else if (switchBtn) {
       html = '<div>' + switchBtn.innerText.replace(/\\n/g, '<br>') + '</div>';
+    } else {
+      html = '<div>No data available for Slot ' + slot + '</div>';
     }
 
     showInspector('🔄 Switch Slot ' + slot + '/6: ' + name, html, 'switch', slot);
@@ -554,7 +524,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     var pDex = (window.BattlePokedex && BattlePokedex[species]) || {};
     var baseSpe = (pDex.baseStats && pDex.baseStats.spe) || '—';
 
-    // Speed Tier Range at Lv 100
     var speedRange = '—';
     if (typeof baseSpe === 'number') {
       var minSpe = Math.floor((2 * baseSpe + 5) * 0.9);
@@ -562,7 +531,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       speedRange = minSpe + ' - ' + maxSpe + ' (Base: ' + baseSpe + ')';
     }
 
-    // Calculate Defensive Profile against all 18 Types
     var weak = [], resist = [], immune = [];
     for (var i = 0; i < TYPE_LIST.length; i++) {
       var atkT = TYPE_LIST[i];
@@ -579,13 +547,13 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     if (foe.ability) html += '<div><b>Ability:</b> ' + foe.ability + '</div>';
 
     if (foe.moves && foe.moves.length) {
-      html += '<div style="margin-top:0.6vh;"><b>Revealed Moves:</b> ' + foe.moves.join(', ') + '</div>';
+      html += '<div style="margin-top:4px;"><b>Revealed Moves:</b> ' + foe.moves.join(', ') + '</div>';
     }
 
-    html += '<div style="margin-top:0.8vh;border-top:0.2vw solid #333;padding-top:0.5vh;"><b>Defensive Profile:</b></div>';
-    if (weak.length) html += '<div style="margin:0.2vh 0;"><span style="color:#a5d6a7;font-weight:bold;">Weak:</span> ' + weak.join(', ') + '</div>';
-    if (resist.length) html += '<div style="margin:0.2vh 0;"><span style="color:#ef9a9a;font-weight:bold;">Resist:</span> ' + resist.join(', ') + '</div>';
-    if (immune.length) html += '<div style="margin:0.2vh 0;"><span style="color:#9e9e9e;font-weight:bold;">Immune:</span> ' + immune.join(', ') + '</div>';
+    html += '<div style="margin-top:4px;border-top:1px solid #333;padding-top:3px;"><b>Defensive Profile:</b></div>';
+    if (weak.length) html += '<div style="margin:1px 0;"><span style="color:#a5d6a7;font-weight:bold;">Weak:</span> ' + weak.join(', ') + '</div>';
+    if (resist.length) html += '<div style="margin:1px 0;"><span style="color:#ef9a9a;font-weight:bold;">Resist:</span> ' + resist.join(', ') + '</div>';
+    if (immune.length) html += '<div style="margin:1px 0;"><span style="color:#9e9e9e;font-weight:bold;">Immune:</span> ' + immune.join(', ') + '</div>';
 
     showInspector('🎯 Opponent: ' + (foe.name || foe.species), html, 'opponent', 1);
   }
@@ -742,7 +710,7 @@ app.use((req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. Native WebSocket Upgrade Listener
+// 4. WebSocket Upgrade Listener
 // ---------------------------------------------------------------------------
 const server = http.createServer(app);
 
