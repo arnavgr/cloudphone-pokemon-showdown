@@ -28,7 +28,7 @@ const simProxy = httpProxy.createProxyServer({
   ws: true,
 });
 
-// Force upstream uncompressed data to allow regex and string injection
+// Force upstream uncompressed data for clean script injection
 webProxy.on("proxyReq", (proxyReq) => {
   proxyReq.setHeader("accept-encoding", "identity");
 });
@@ -68,39 +68,108 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
       const injectedHead = `
 <style>
-  /* 1. Hide full-screen move explanation tooltips */
+  /* Suppress default oversized hover tooltips */
   #tooltipwrapper, .tooltip, .battle-log-tag {
     display: none !important;
     visibility: hidden !important;
     opacity: 0 !important;
     pointer-events: none !important;
   }
-  /* 2. Distinct high-visibility D-Pad spatial focus outline */
+
+  /* High-visibility spatial focus indicator */
   button:focus, a:focus, input:focus, select:focus {
     outline: 3px solid #ffcc00 !important;
     outline-offset: 1px !important;
     box-shadow: 0 0 8px #ffcc00 !important;
   }
+
+  /* Custom 240x320 Compact HUD Inspector */
+  #cp-inspector {
+    display: none;
+    position: fixed;
+    top: 36px;
+    left: 4px;
+    right: 4px;
+    background: rgba(18, 22, 28, 0.96);
+    border: 2px solid #ffcc00;
+    border-radius: 6px;
+    color: #fff;
+    padding: 8px;
+    z-index: 999999;
+    font-family: sans-serif;
+    font-size: 11px;
+    line-height: 1.35;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.8);
+  }
+  #cp-inspector-title {
+    font-size: 13px;
+    font-weight: bold;
+    color: #ffd700;
+    margin-bottom: 4px;
+    border-bottom: 1px solid #444;
+    padding-bottom: 2px;
+  }
+  #cp-inspector-body {
+    color: #e0e0e0;
+    margin-bottom: 6px;
+    max-height: 140px;
+    overflow-y: auto;
+  }
+  #cp-inspector-footer {
+    font-size: 10px;
+    color: #00ffcc;
+    font-weight: bold;
+    text-align: center;
+    border-top: 1px solid #333;
+    padding-top: 4px;
+  }
 </style>
 `;
 
       const injectedBody = `
+<div id="cp-inspector">
+  <div id="cp-inspector-title">Action Preview</div>
+  <div id="cp-inspector-body">Loading...</div>
+  <div id="cp-inspector-footer">[CALL / OK] Confirm &nbsp;|&nbsp; [#] Close</div>
+</div>
+
 <script>
 (function() {
   try {
     window.localStorage.setItem('showdown_crossteams', 'false');
   } catch (e) {}
 
-  // 1. Intercept horizontal D-Pad without canceling native spatial focus
+  var activeInspectType = null; // 'move' | 'switch'
+  var activeInspectIndex = null; // 1-6
+
+  function hideInspector() {
+    var el = document.getElementById('cp-inspector');
+    if (el) el.style.display = 'none';
+    activeInspectType = null;
+    activeInspectIndex = null;
+  }
+
+  function showInspector(title, bodyHtml, type, index) {
+    var el = document.getElementById('cp-inspector');
+    var titleEl = document.getElementById('cp-inspector-title');
+    var bodyEl = document.getElementById('cp-inspector-body');
+    if (!el || !titleEl || !bodyEl) return;
+
+    titleEl.innerHTML = title;
+    bodyEl.innerHTML = bodyHtml;
+    el.style.display = 'block';
+    activeInspectType = type;
+    activeInspectIndex = index;
+  }
+
+  // 1. Intercept D-Pad Left/Right to preserve native spatial navigation
   function interceptDpad(e) {
     var key = e.key;
     var code = e.keyCode || e.which;
     var isHorizontal = (key === 'ArrowLeft' || key === 'ArrowRight' || key === 'Left' || key === 'Right' || code === 37 || code === 39);
 
     if (isHorizontal) {
-      if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
-        return;
-      }
+      if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
       e.stopImmediatePropagation();
     }
   }
@@ -110,51 +179,132 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     document.addEventListener(evt, interceptDpad, true);
   });
 
-  // 2. Direct Keypad Action Mapping (1-4 Moves, 5-0 Switch, * Tera, # Undo)
+  // 2. Keypad Inspector & Confirmation Logic
   window.addEventListener('keydown', function(e) {
     if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
 
     var key = e.key;
+    var code = e.keyCode || e.which;
 
-    // Moves 1-4
-    if (['1', '2', '3', '4'].includes(key)) {
-      var moveBtn = document.querySelector('button[name="chooseMove"][value="' + key + '"]');
-      if (moveBtn) {
-        moveBtn.click();
-        e.preventDefault();
+    var isCallOrOk = (
+      key === 'Enter' || key === 'Call' || key === 'F3' ||
+      code === 13 || code === 170 || code === 114
+    );
+
+    // CONFIRM ACTION via CALL / CENTER KEY
+    if (isCallOrOk && activeInspectType) {
+      if (activeInspectType === 'move') {
+        var moveBtn = document.querySelector('button[name="chooseMove"][value="' + activeInspectIndex + '"]');
+        if (moveBtn) moveBtn.click();
+      } else if (activeInspectType === 'switch') {
+        var switchBtn = document.querySelector('button[name="chooseSwitch"][value="' + activeInspectIndex + '"]');
+        if (switchBtn) switchBtn.click();
       }
+      hideInspector();
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
     }
 
-    // Switches 5-0 (Slots 1-6)
-    var switchMap = { '5': '1', '6': '2', '7': '3', '8': '4', '9': '5', '0': '6' };
-    if (switchMap[key]) {
-      var switchBtn = document.querySelector('button[name="chooseSwitch"][value="' + switchMap[key] + '"]');
-      if (switchBtn) {
-        switchBtn.click();
+    // CLOSE INSPECTOR OR UNDO (#)
+    if (key === '#' || key === 'Escape') {
+      if (activeInspectType) {
+        hideInspector();
         e.preventDefault();
+      } else {
+        var undo = document.querySelector('button[name="undo"]');
+        if (undo) undo.click();
       }
+      return;
     }
 
-    // Gimmicks (*) -> Tera / Mega / Dynamax
+    // TERA / GIMMICK (*)
     if (key === '*') {
       var tera = document.querySelector('input[name="terastallize"], input[name="megaEvolution"]');
       if (tera) {
         tera.click();
         e.preventDefault();
       }
+      return;
     }
 
-    // Cancel / Undo (#)
-    if (key === '#') {
-      var undo = document.querySelector('button[name="undo"]');
-      if (undo) {
-        undo.click();
-        e.preventDefault();
+    // MOVES (1 - 4)
+    if (['1', '2', '3', '4'].includes(key)) {
+      var moveIndex = key;
+      if (activeInspectType === 'move' && activeInspectIndex === moveIndex) {
+        hideInspector();
+      } else {
+        inspectMove(moveIndex);
       }
+      e.preventDefault();
+      return;
+    }
+
+    // SWITCHES (5 - 0 -> Slots 1 - 6)
+    var switchMap = { '5': '1', '6': '2', '7': '3', '8': '4', '9': '5', '0': '6' };
+    if (switchMap[key]) {
+      var slotIndex = switchMap[key];
+      if (activeInspectType === 'switch' && activeInspectIndex === slotIndex) {
+        hideInspector();
+      } else {
+        inspectPokemon(slotIndex);
+      }
+      e.preventDefault();
+      return;
     }
   });
 
-  // 3. Disable Showdown's internal room-switching methods
+  // Extract Move Details
+  function inspectMove(index) {
+    var moveBtn = document.querySelector('button[name="chooseMove"][value="' + index + '"]');
+    if (!moveBtn) return;
+
+    var room = window.app && app.curSideRoom;
+    var reqMove = room && room.request && room.request.active && room.request.active[0] && room.request.active[0].moves[index - 1];
+
+    var name = moveBtn.getAttribute('data-move') || moveBtn.innerText.split('\\n')[0] || ('Move ' + index);
+    var details = '';
+
+    if (reqMove) {
+      details += '<div><b>Move:</b> ' + (reqMove.move || name) + '</div>';
+      details += '<div><b>PP:</b> ' + (reqMove.pp !== undefined ? (reqMove.pp + '/' + reqMove.maxpp) : 'N/A') + '</div>';
+      if (reqMove.target) details += '<div><b>Target:</b> ' + reqMove.target + '</div>';
+      if (reqMove.disabled) details += '<div style="color:#ff5555;"><b>[DISABLED]</b></div>';
+    } else {
+      details = '<div>' + moveBtn.innerText.replace(/\\n/g, '<br>') + '</div>';
+    }
+
+    showInspector('⚡ Move ' + index + ': ' + name, details, 'move', index);
+  }
+
+  // Extract Switch Slot Details
+  function inspectPokemon(slot) {
+    var switchBtn = document.querySelector('button[name="chooseSwitch"][value="' + slot + '"]');
+    if (!switchBtn) return;
+
+    var room = window.app && app.curSideRoom;
+    var mon = room && room.request && room.request.side && room.request.side.pokemon && room.request.side.pokemon[slot - 1];
+
+    var name = mon ? (mon.details.split(',')[0]) : ('Slot ' + slot);
+    var html = '';
+
+    if (mon) {
+      html += '<div><b>HP:</b> ' + mon.condition + '</div>';
+      if (mon.item) html += '<div><b>Item:</b> ' + mon.item + '</div>';
+      if (mon.ability) html += '<div><b>Ability:</b> ' + mon.ability + '</div>';
+      if (mon.teraType) html += '<div><b>Tera Type:</b> ' + mon.teraType + '</div>';
+      if (mon.moves && mon.moves.length) {
+        html += '<div style="margin-top:4px;"><b>Moves:</b> ' + mon.moves.join(', ') + '</div>';
+      }
+      if (mon.active) html += '<div style="color:#00ffcc;"><b>[CURRENTLY ACTIVE]</b></div>';
+    } else {
+      html = '<div>' + switchBtn.innerText.replace(/\\n/g, '<br>') + '</div>';
+    }
+
+    showInspector('🔄 Slot ' + slot + ': ' + name, html, 'switch', slot);
+  }
+
+  // 3. App Patching and Auto-Connect Loop
   function patchShowdown() {
     if (window.app) {
       app.focusPrevRoom = function() {};
@@ -162,7 +312,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     }
   }
 
-  // 4. Auto-connect polling loop
   function attemptConnect() {
     try {
       window.Config = window.Config || {};
@@ -175,10 +324,8 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
         ssl: true
       };
       patchShowdown();
-      if (window.app && typeof app.connect === 'function') {
-        if (!app.connection) {
-          app.connect();
-        }
+      if (window.app && typeof app.connect === 'function' && !app.connection) {
+        app.connect();
         return true;
       }
     } catch (err) {}
@@ -223,9 +370,7 @@ webProxy.on("error", (err, req, res) => {
 });
 
 simProxy.on("error", (err, req, socket) => {
-  if (socket && socket.destroy) {
-    socket.destroy();
-  }
+  if (socket && socket.destroy) socket.destroy();
 });
 
 // ---------------------------------------------------------------------------
@@ -303,7 +448,7 @@ app.use((req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. WebSocket Upgrade Listener
+// 4. Native WebSocket Upgrade Listener
 // ---------------------------------------------------------------------------
 const server = http.createServer(app);
 
