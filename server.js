@@ -70,8 +70,12 @@ proxy.on("proxyRes", (proxyRes, req, res) => {
 });
 
 proxy.on("error", (err, req, res) => {
-  if (res && !res.headersSent) res.writeHead(502, { "content-type": "text/plain" });
-  if (res?.end) res.end("Compatibility proxy error: " + err.message);
+  if (res && typeof res.writeHead === "function" && !res.headersSent) {
+    res.writeHead(502, { "content-type": "text/plain" });
+  }
+  if (res && typeof res.end === "function") {
+    res.end("Compatibility proxy error: " + err.message);
+  }
 });
 
 app.use((req, res) => proxy.web(req, res));
