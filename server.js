@@ -1,6 +1,7 @@
 import express from "express";
 import http from "http";
 import httpProxy from "http-proxy";
+import zlib from "zlib";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -22,8 +23,20 @@ const simProxy = httpProxy.createProxyServer({
   ws: true,
 });
 
-webProxy.on("proxyReq", (proxyReq) => {
-  proxyReq.setHeader("accept-encoding", "identity");
+function forwardClientIp(proxyReq, req) {
+  const clientIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+  if (clientIp) {
+    proxyReq.setHeader("x-forwarded-for", clientIp);
+    proxyReq.setHeader("x-real-ip", clientIp.split(",")[0].trim());
+  }
+}
+
+webProxy.on("proxyReq", (proxyReq, req) => {
+  forwardClientIp(proxyReq, req);
+});
+
+simProxy.on("proxyReqWs", (proxyReq, req) => {
+  forwardClientIp(proxyReq, req);
 });
 
 function sanitizeHeaders(proxyRes) {
@@ -32,8 +45,8 @@ function sanitizeHeaders(proxyRes) {
   delete proxyRes.headers["x-frame-options"];
   delete proxyRes.headers["cross-origin-opener-policy"];
   delete proxyRes.headers["cross-origin-embedder-policy"];
-  delete proxyRes.headers["content-encoding"];
   proxyRes.headers["access-control-allow-origin"] = "*";
+  proxyRes.headers["access-control-allow-credentials"] = "true";
 
   const setCookie = proxyRes.headers["set-cookie"];
   if (setCookie) {
@@ -41,6 +54,20 @@ function sanitizeHeaders(proxyRes) {
       Array.isArray(setCookie) ? setCookie : [setCookie]
     ).map((cookie) => cookie.replace(/;\s*Domain=[^;]+/i, ""));
   }
+}
+
+function decompressBuffer(buffer, encoding) {
+  if (!buffer || buffer.length === 0) return buffer;
+  try {
+    if (encoding === "gzip" || encoding === "deflate") {
+      return zlib.unzipSync(buffer);
+    } else if (encoding === "br") {
+      return zlib.brotliDecompressSync(buffer);
+    }
+  } catch (e) {
+    return buffer;
+  }
+  return buffer;
 }
 
 webProxy.on("proxyRes", sanitizeHeaders);
@@ -51,8 +78,12 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
   proxyRes.on("end", () => {
     let body = Buffer.concat(chunks);
     const contentType = proxyRes.headers["content-type"] || "";
+    const contentEncoding = proxyRes.headers["content-encoding"];
 
     if (contentType.includes("text/html")) {
+      body = decompressBuffer(body, contentEncoding);
+      delete proxyRes.headers["content-encoding"];
+
       const currentHost = req.headers.host;
       let text = body.toString("utf8");
 
@@ -193,7 +224,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     return '<span class="eff-badge eff-neutral">Neutral (1×)</span>';
   }
 
-  // --- /DT DESCRIPTION RESOLVERS ---
   function getItemDesc(itemName) {
     if (!itemName) return '';
     var clean = itemName.replace(/\\s*\\(Lost\\)$/i, '');
@@ -226,7 +256,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     return html;
   }
 
-  // --- CENTERED FULL-VIEW INSPECTOR MODAL ---
   function getInspectorEl() {
     var el = document.getElementById('cp-inspector');
     if (!el) {
@@ -259,7 +288,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     activeInspectIndex = Number(index) || 1;
   }
 
-  // --- FLOATING CHAT & LOG MODAL (KEY 9) ---
   function getChatModalEl() {
     var el = document.getElementById('cp-chat-modal');
     if (!el) {
@@ -330,11 +358,8 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     if (!msg) return;
 
     var room = getBattleRoom();
-    if (room && typeof room.send === 'function') {
-      room.send(msg);
-    } else if (window.app && typeof app.send === 'function') {
-      app.send(msg);
-    }
+    if (room && typeof room.send === 'function') room.send(msg);
+    else if (window.app && typeof app.send === 'function') app.send(msg);
 
     input.value = '';
     setTimeout(syncChatContent, 100);
@@ -476,7 +501,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     return [];
   }
 
-  // 1. Release Isolation
   window.addEventListener('keyup', function(e) {
     var code = e.keyCode || e.which;
     var isHorizontal = (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || code === 37 || code === 39);
@@ -485,7 +509,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     }
   }, true);
 
-  // 2. Hardware Controller (Strict Capture Phase)
   window.addEventListener('keydown', function(e) {
     var key = e.key || '';
     var code = e.keyCode || e.which || 0;
@@ -495,13 +518,11 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     var isEnter = (key === 'Enter' || code === 13);
     var isHashOrEscape = (key === '#' || key === 'Hash' || key === 'Pound' || key === 'Escape' || code === 27);
 
-    // Prevent Showdown client.js toUpperCase() crash on Call key
     if (isCall) {
       e.preventDefault();
       e.stopImmediatePropagation();
     }
 
-    // --- CHAT MODAL INTERACTION ---
     var isUp = (key === 'ArrowUp' || code === 38);
     var isDown = (key === 'ArrowDown' || code === 40);
 
@@ -554,7 +575,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
     if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
 
-    // --- D-PAD IN-MODAL CYCLING ---
     var isLeft = (key === 'ArrowLeft' || code === 37);
     var isRight = (key === 'ArrowRight' || code === 39);
 
@@ -588,7 +608,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
           inspectMyTeam(nextMon);
         }
       } else if (isUp || isDown) {
-        // Up/Down isolated strictly to 0 menu (Move <-> Switch)
         if (activeInspectType === 'move') {
           var switchSlots = getValidSwitchSlots();
           inspectPokemon(switchSlots[0] || 1);
@@ -605,7 +624,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       e.stopImmediatePropagation();
     }
 
-    // --- CALL / ENTER -> EXECUTE ACTION ---
     if (isCall || isEnter) {
       if (activeInspectType === 'move') {
         var moveBtn = document.querySelector('button[name="chooseMove"][value="' + activeInspectIndex + '"]') ||
@@ -666,7 +684,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       }
     }
 
-    // --- # / ESCAPE -> CLOSE INSPECTOR OR UNDO ---
     if (isHashOrEscape) {
       if (activeInspectType) {
         hideInspector();
@@ -687,7 +704,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       return;
     }
 
-    // --- 0 -> UNIFIED MODAL TOGGLE (MOVES / SWITCHES ONLY) ---
     if (key === '0' || code === 48) {
       if (activeInspectType === 'move' || activeInspectType === 'switch') {
         hideInspector();
@@ -707,7 +723,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       return;
     }
 
-    // --- 1 -> OPPONENT PROFILE & WEAKNESS INSPECTOR ---
     if (key === '1' || code === 49) {
       if (activeInspectType === 'opponent') {
         hideInspector();
@@ -719,7 +734,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       return;
     }
 
-    // --- 2 -> MY TEAM DEFENSIVE PROFILE & /DT INSPECTOR ---
     if (key === '2' || code === 50 || eventCode === 'Digit2' || eventCode === 'Numpad2') {
       if (activeInspectType === 'myteam') {
         hideInspector();
@@ -731,7 +745,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       return;
     }
 
-    // --- 9 -> TOGGLE FLOATING CHAT & LOG MODAL ---
     if (key === '9' || code === 57 || eventCode === 'Digit9' || eventCode === 'Numpad9') {
       toggleChatModal();
       e.preventDefault();
@@ -739,7 +752,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       return;
     }
 
-    // --- * -> TERA / GIMMICK ---
     if (key === '*' || code === 106 || eventCode === 'NumpadMultiply') {
       var tera = document.querySelector('input[name="terastallize"], input[name="megaEvolution"]');
       if (tera) {
@@ -751,7 +763,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     }
   }, true);
 
-  // Extract Move Details, Active Pokémon Type & Speed
   function inspectMove(index) {
     index = Number(index) || 1;
     var moveBtn = document.querySelector('button[name="chooseMove"][value="' + index + '"]') ||
@@ -804,7 +815,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     showInspector('⚡ Move ' + index + '/4: ' + moveName, html, 'move', index);
   }
 
-  // Extract Switch Slot Details
   function inspectPokemon(slot) {
     slot = Number(slot) || 1;
     var req = getBattleRequest();
@@ -856,7 +866,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     showInspector('🔄 Switch Slot ' + slot + '/6: ' + rawDetails, html, 'switch', slot);
   }
 
-  // Extract Cyclable Opponent Profile, Weaknesses, Speed & /dt Explanations (Key 1)
   function inspectOpponent(index) {
     index = Number(index) || 1;
     var foeTeam = getFoeTeam();
@@ -945,7 +954,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     showInspector('🎯 Opponent ' + index + '/' + foeTeam.length + ': ' + cleanName, html, 'opponent', index);
   }
 
-  // Extract Cyclable My Team Profile, Weaknesses, Speed & /dt Explanations (Key 2)
   function inspectMyTeam(index) {
     index = Number(index) || 1;
     var myTeam = getMyTeam();
@@ -987,7 +995,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     showInspector('🛡️ My Team ' + index + '/' + myTeam.length + ': ' + rawName, html, 'myteam', index);
   }
 
-  // 3. Automated DOM Sweeper
   function patchShowdown() {
     var chatElements = document.querySelectorAll('button[name="openChat"], button[name="openBattleLog"], button.battle-chat-toggle, .battle-chat-toggle, .chat-toggle');
     for (var i = 0; i < chatElements.length; i++) {
@@ -1018,7 +1025,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
   setInterval(patchShowdown, 200);
 
-  // 4. Auto-Connect Polling Loop
   function attemptConnect() {
     try {
       window.Config = window.Config || {};
@@ -1060,7 +1066,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
       body = Buffer.from(text, "utf8");
       proxyRes.headers["content-length"] = Buffer.byteLength(body);
-      delete proxyRes.headers["content-encoding"];
     }
 
     res.writeHead(proxyRes.statusCode, proxyRes.headers);
