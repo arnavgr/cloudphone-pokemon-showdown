@@ -1,7 +1,6 @@
 import express from "express";
 import http from "http";
 import httpProxy from "http-proxy";
-import { HttpsProxyAgent } from "https-proxy-agent";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -9,13 +8,9 @@ app.set("trust proxy", 1);
 const TARGET_WEB = "https://play.pokemonshowdown.com";
 const TARGET_SIM = "https://sim3.psim.us";
 
-const PROXY_URL = process.env.PROXY_URL;
-const proxyAgent = PROXY_URL ? new HttpsProxyAgent(PROXY_URL) : undefined;
-
 const webProxy = httpProxy.createProxyServer({
   target: TARGET_WEB,
   changeOrigin: true,
-  agent: proxyAgent,
   secure: true,
   selfHandleResponse: true,
 });
@@ -23,7 +18,6 @@ const webProxy = httpProxy.createProxyServer({
 const simProxy = httpProxy.createProxyServer({
   target: TARGET_SIM,
   changeOrigin: true,
-  agent: proxyAgent,
   secure: true,
   ws: true,
 });
@@ -376,10 +370,20 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     return null;
   }
 
+  // Robust Type Fetcher with Active Terastallization Priority
   function getOpponentTypes() {
     var foe = getOpponentActive();
     if (!foe) return [];
-    if (foe.terastallized || foe.teraType) return [foe.teraType || foe.terastallized];
+
+    // Prioritize active Tera type
+    if (foe.terastallized && typeof foe.terastallized === 'string' && foe.terastallized !== 'Stellar') {
+      return [foe.terastallized];
+    }
+    if (foe.terastallized && foe.teraType && foe.teraType !== 'Stellar') {
+      return [foe.teraType];
+    }
+
+    // Native types
     if (foe.types && foe.types.length) return foe.types;
     if (foe.speciesData && foe.speciesData.types) return foe.speciesData.types;
 
@@ -402,21 +406,26 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     }
   }, true);
 
-  // 2. Hardware Controller
+  // 2. Hardware Controller (Strict Capture Phase)
   window.addEventListener('keydown', function(e) {
-    var key = e.key;
-    var code = e.keyCode || e.which;
-    var eventCode = e.code;
+    var key = e.key || '';
+    var code = e.keyCode || e.which || 0;
+    var eventCode = e.code || '';
 
-    var isLeft = (key === 'ArrowLeft' || code === 37);
-    var isRight = (key === 'ArrowRight' || code === 39);
-    var isUp = (key === 'ArrowUp' || code === 38);
-    var isDown = (key === 'ArrowDown' || code === 40);
-    var isCall = (key === 'Call' || code === 0);
+    var isCall = (key === 'Call' || code === 0 || code === 170);
     var isEnter = (key === 'Enter' || code === 13);
     var isHashOrEscape = (key === '#' || key === 'Hash' || key === 'Pound' || key === 'Escape' || code === 27);
 
+    // Prevent Showdown client.js toUpperCase() crash on Call key
+    if (isCall) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }
+
     // --- CHAT MODAL INTERACTION ---
+    var isUp = (key === 'ArrowUp' || code === 38);
+    var isDown = (key === 'ArrowDown' || code === 40);
+
     if (isChatModalOpen()) {
       var chatInput = document.getElementById('cp-chat-input');
       var contentEl = document.getElementById('cp-chat-content');
@@ -467,6 +476,9 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
 
     // --- D-PAD IN-MODAL CYCLING ---
+    var isLeft = (key === 'ArrowLeft' || code === 37);
+    var isRight = (key === 'ArrowRight' || code === 39);
+
     if (activeInspectType && (isLeft || isRight || isUp || isDown)) {
       if (isLeft || isRight) {
         var delta = isRight ? 1 : -1;
@@ -495,12 +507,11 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       return;
     }
 
-    // Horizontal Spatial Navigation Isolation (Modal closed)
     if (isLeft || isRight) {
       e.stopImmediatePropagation();
     }
 
-    // --- CALL / ENTER -> EXECUTE ACTION (ACCURATE VALUE MATCHING) ---
+    // --- CALL / ENTER -> EXECUTE ACTION ---
     if (isCall || isEnter) {
       if (activeInspectType === 'move') {
         var moveBtn = document.querySelector('button[name="chooseMove"][value="' + activeInspectIndex + '"]') ||
@@ -511,17 +522,44 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
         e.stopImmediatePropagation();
         return;
       } else if (activeInspectType === 'switch') {
+        var req = getBattleRequest();
+        var mon = req && req.side && req.side.pokemon && req.side.pokemon[activeInspectIndex - 1];
+        var monSpecies = mon ? mon.details.split(',')[0].trim().toLowerCase() : '';
+
         var switchBtns = document.querySelectorAll('button[name="chooseSwitch"], button.switchselect');
         var targetBtn = null;
+
+        // 1. Match exactly by Pokémon species name
         for (var s = 0; s < switchBtns.length; s++) {
-          if (parseInt(switchBtns[s].value, 10) === parseInt(activeInspectIndex, 10)) {
+          var btnText = switchBtns[s].innerText.toLowerCase();
+          if (monSpecies && btnText.includes(monSpecies)) {
             targetBtn = switchBtns[s];
             break;
           }
         }
+
+        // 2. Fallback: match by integer value
+        if (!targetBtn) {
+          for (var s = 0; s < switchBtns.length; s++) {
+            var btnVal = parseInt(switchBtns[s].value, 10);
+            if (btnVal === activeInspectIndex || btnVal === (activeInspectIndex - 1)) {
+              targetBtn = switchBtns[s];
+              break;
+            }
+          }
+        }
+
         if (targetBtn) {
           targetBtn.click();
+        } else {
+          var room = getBattleRoom();
+          if (room && typeof room.choose === 'function') {
+            room.choose('switch', activeInspectIndex);
+          } else if (room && typeof room.send === 'function') {
+            room.send('/choose switch ' + activeInspectIndex);
+          }
         }
+
         hideInspector();
         e.preventDefault();
         e.stopImmediatePropagation();
@@ -629,7 +667,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     var mult = (category === 'Status') ? 1 : getEffectiveness(type, foeTypes);
     var effHtml = (category === 'Status') ? '<span class="eff-badge eff-neutral">Status</span>' : formatMultiplierBadge(mult);
 
-    // Active Pokémon info
     var activeSpecies = activeMon ? activeMon.details.split(',')[0] : 'Active';
     var activeSpeciesKey = activeSpecies.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
     var activeDex = (window.BattlePokedex && BattlePokedex[activeSpeciesKey]) || (window.Dex && Dex.species ? Dex.species.get(activeSpeciesKey) : null);
@@ -702,7 +739,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     showInspector('🔄 Switch Slot ' + slot + '/6: ' + rawDetails, html, 'switch', slot);
   }
 
-  // Extract Opponent Profile & Official Level-Scaled Speed Calculation
+  // Extract Opponent Profile, Item, Ability, Tera, and Speed Calculation
   function inspectOpponent() {
     var foe = getOpponentActive();
     var foeTypes = getOpponentTypes();
@@ -717,7 +754,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     var pDex = (window.BattlePokedex && BattlePokedex[speciesKey]) || (window.Dex && Dex.species ? Dex.species.get(speciesKey) : {});
     var baseSpe = (pDex.baseStats && pDex.baseStats.spe) || (pDex.spe) || 0;
 
-    // Determine target level
     var level = 100;
     if (foe.level) {
       level = Number(foe.level);
@@ -726,14 +762,12 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       if (lvlMatch) level = parseInt(lvlMatch[1], 10);
     }
 
-    // Official Showdown Level-Scaled Formula
     var speedText = '—';
     if (baseSpe > 0) {
       var minMin = Math.floor((Math.floor((2 * baseSpe) * level / 100) + 5) * 0.9);
       var minNeutral = Math.floor((2 * baseSpe + 31) * level / 100) + 5;
       var maxMax = Math.floor((Math.floor((2 * baseSpe + 94) * level / 100) + 5) * 1.1);
 
-      // Apply stat stage boosts/drops if present
       var speBoost = (foe.boosts && foe.boosts.spe) ? foe.boosts.spe : 0;
       if (speBoost !== 0) {
         var mult = (speBoost > 0) ? (2 + speBoost) / 2 : 2 / (2 - speBoost);
@@ -746,6 +780,20 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       speedText = minNeutral + ' to ' + maxMax + boostLabel + ' <span style="color:#888;font-size:9px;">(Min: ' + minMin + ', Base: ' + baseSpe + ')</span>';
     }
 
+    // Item Resolution
+    var itemText = foe.item || (foe.prevItem ? (foe.prevItem + ' (Lost)') : 'Unrevealed / None');
+
+    // Ability Resolution (Revealed or Possible list from Dex)
+    var abilityText = foe.ability || '';
+    if (!abilityText && pDex && pDex.abilities) {
+      var abList = [];
+      for (var k in pDex.abilities) {
+        abList.push(pDex.abilities[k]);
+      }
+      abilityText = abList.join(', ') + ' <span style="color:#888;font-size:9px;">(Possible)</span>';
+    }
+    if (!abilityText) abilityText = 'Unknown';
+
     var weak = [], resist = [], immune = [];
     for (var i = 0; i < TYPE_LIST.length; i++) {
       var atkT = TYPE_LIST[i];
@@ -755,11 +803,13 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       else if (m < 1) resist.push(atkT + ' (' + m + '×)');
     }
 
+    var teraLabel = foe.terastallized ? ' <span style="color:#00ffcc;font-weight:bold;">[Tera: ' + (foe.teraType || foe.terastallized) + ']</span>' : '';
+
     var html = '';
-    html += '<div><b>Types:</b> ' + (foeTypes.join(' / ') || 'Unknown') + '</div>';
+    html += '<div><b>Types:</b> ' + (foeTypes.join(' / ') || 'Unknown') + teraLabel + '</div>';
     html += '<div><b>Speed (Lv ' + level + '):</b> ' + speedText + '</div>';
-    if (foe.item) html += '<div><b>Known Item:</b> ' + foe.item + '</div>';
-    if (foe.ability) html += '<div><b>Ability:</b> ' + foe.ability + '</div>';
+    html += '<div><b>Item:</b> ' + itemText + '</div>';
+    html += '<div><b>Ability:</b> ' + abilityText + '</div>';
 
     if (foe.moves && foe.moves.length) {
       html += '<div style="margin-top:4px;"><b>Revealed Moves:</b> ' + foe.moves.join(', ') + '</div>';
@@ -856,9 +906,6 @@ simProxy.on("error", (err, req, socket) => {
   if (socket && socket.destroy) socket.destroy();
 });
 
-// ---------------------------------------------------------------------------
-// 1. Short-Circuit Trackers & Ad Networks
-// ---------------------------------------------------------------------------
 app.get([
   /(analytics\.js|gtag\/js|ga\.js)/,
   /ad-manager\.js/,
@@ -871,9 +918,6 @@ app.get([
   return res.send("// Ad/Analytics disabled by proxy");
 });
 
-// ---------------------------------------------------------------------------
-// 2. Dynamic Config Interception
-// ---------------------------------------------------------------------------
 app.get("/config/config.js", async (req, res) => {
   try {
     const fetchOptions = {
@@ -907,9 +951,6 @@ Config.server = Config.defaultserver = {
   }
 });
 
-// ---------------------------------------------------------------------------
-// 3. Route Dispatcher
-// ---------------------------------------------------------------------------
 app.use((req, res) => {
   if (req.url.startsWith("/showdown")) {
     simProxy.web(req, res, {
@@ -930,9 +971,6 @@ app.use((req, res) => {
   }
 });
 
-// ---------------------------------------------------------------------------
-// 4. Native WebSocket Upgrade Listener
-// ---------------------------------------------------------------------------
 const server = http.createServer(app);
 
 server.on("upgrade", (req, socket, head) => {
