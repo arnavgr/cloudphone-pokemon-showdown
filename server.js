@@ -77,7 +77,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     position: absolute !important;
   }
 
-  /* 2. Obliterate on-screen mobile chat buttons and side logs */
+  /* 2. Suppress on-screen mobile chat buttons */
   button[name="openChat"],
   button[name="closeChat"],
   button[name="openBattleLog"],
@@ -99,7 +99,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     left: -9999px !important;
   }
 
-  /* 3. Hide background side chat log */
+  /* 3. Hide side chat log in normal view */
   .battle-log, .chat-log {
     display: none !important;
   }
@@ -421,7 +421,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       var chatInput = document.getElementById('cp-chat-input');
       var contentEl = document.getElementById('cp-chat-content');
 
-      // If user is currently focused in chat input
       if (document.activeElement === chatInput) {
         if (isEnter || isCall) {
           submitChatMessage();
@@ -436,10 +435,9 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
           e.stopImmediatePropagation();
           return;
         }
-        return; // Allow standard text typing
+        return;
       }
 
-      // If user is navigating the chat modal (not typed in input)
       if (isUp && contentEl) {
         contentEl.scrollTop -= 40;
         e.preventDefault();
@@ -466,7 +464,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       }
     }
 
-    // Ignore other global shortcuts if user is typing elsewhere
     if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
 
     // --- D-PAD IN-MODAL CYCLING ---
@@ -503,7 +500,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       e.stopImmediatePropagation();
     }
 
-    // --- CALL / ENTER -> EXECUTE ACTION ---
+    // --- CALL / ENTER -> EXECUTE ACTION (ACCURATE VALUE MATCHING) ---
     if (isCall || isEnter) {
       if (activeInspectType === 'move') {
         var moveBtn = document.querySelector('button[name="chooseMove"][value="' + activeInspectIndex + '"]') ||
@@ -514,9 +511,17 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
         e.stopImmediatePropagation();
         return;
       } else if (activeInspectType === 'switch') {
-        var switchBtn = document.querySelector('button[name="chooseSwitch"][value="' + activeInspectIndex + '"]') ||
-                        document.querySelectorAll('button[name="chooseSwitch"]')[activeInspectIndex - 1];
-        if (switchBtn) switchBtn.click();
+        var switchBtns = document.querySelectorAll('button[name="chooseSwitch"], button.switchselect');
+        var targetBtn = null;
+        for (var s = 0; s < switchBtns.length; s++) {
+          if (parseInt(switchBtns[s].value, 10) === parseInt(activeInspectIndex, 10)) {
+            targetBtn = switchBtns[s];
+            break;
+          }
+        }
+        if (targetBtn) {
+          targetBtn.click();
+        }
         hideInspector();
         e.preventDefault();
         e.stopImmediatePropagation();
@@ -596,13 +601,14 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     }
   }, true);
 
-  // Extract Move Details & Multipliers
+  // Extract Move Details, Active Pokémon Type & Speed
   function inspectMove(index) {
     index = Number(index) || 1;
     var moveBtn = document.querySelector('button[name="chooseMove"][value="' + index + '"]') ||
                   document.querySelectorAll('button[name="chooseMove"]')[index - 1];
 
     var req = getBattleRequest();
+    var activeMon = req && req.side && req.side.pokemon && (req.side.pokemon.find(function(p) { return p.active; }) || req.side.pokemon[0]);
     var reqMove = req && req.active && req.active[0] && req.active[0].moves && req.active[0].moves[index - 1];
 
     var rawName = (moveBtn && (moveBtn.getAttribute('data-move') || moveBtn.innerText.split('\\n')[0])) || (reqMove && reqMove.move) || ('Move ' + index);
@@ -623,7 +629,17 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     var mult = (category === 'Status') ? 1 : getEffectiveness(type, foeTypes);
     var effHtml = (category === 'Status') ? '<span class="eff-badge eff-neutral">Status</span>' : formatMultiplierBadge(mult);
 
+    // Active Pokémon info
+    var activeSpecies = activeMon ? activeMon.details.split(',')[0] : 'Active';
+    var activeSpeciesKey = activeSpecies.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    var activeDex = (window.BattlePokedex && BattlePokedex[activeSpeciesKey]) || (window.Dex && Dex.species ? Dex.species.get(activeSpeciesKey) : null);
+    var activeTypes = (activeMon && activeMon.types) || (activeDex && activeDex.types) || [];
+    var activeSpeed = (activeMon && activeMon.stats && activeMon.stats.spe) ? activeMon.stats.spe : (activeDex && activeDex.baseStats ? activeDex.baseStats.spe : '—');
+
     var html = '';
+    html += '<div style="background:rgba(255,255,255,0.05);padding:2px 4px;border-radius:3px;margin-bottom:4px;font-size:10px;">' +
+            '<b>' + activeSpecies + '</b> (' + (activeTypes.join('/') || '—') + (activeMon && activeMon.teraType ? ' [Tera ' + activeMon.teraType + ']' : '') + ') &nbsp;|&nbsp; <b>Spe:</b> ' + activeSpeed + '</div>';
+
     html += '<div><b>Type:</b> ' + type + ' ' + (category ? '(' + category + ')' : '') + '</div>';
     html += '<div><b>Power:</b> ' + bp + ' &nbsp;|&nbsp; <b>Acc:</b> ' + acc + ' &nbsp;|&nbsp; <b>PP:</b> ' + ppText + '</div>';
     html += '<div style="margin: 4px 0;"><b>Vs ' + foeName + ' (' + (foeTypes.join('/') || 'Unknown') + '):</b><br>' + effHtml + '</div>';
@@ -639,12 +655,9 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     showInspector('⚡ Move ' + index + '/4: ' + moveName, html, 'move', index);
   }
 
-  // Extract Switch Slot Details & Matchups
+  // Extract Switch Slot Details, Types, Exact Speed & Matchups
   function inspectPokemon(slot) {
     slot = Number(slot) || 1;
-    var switchBtn = document.querySelector('button[name="chooseSwitch"][value="' + slot + '"]') ||
-                    document.querySelectorAll('button[name="chooseSwitch"]')[slot - 1];
-
     var req = getBattleRequest();
     var mon = req && req.side && req.side.pokemon && req.side.pokemon[slot - 1];
 
@@ -652,14 +665,19 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     var foe = getOpponentActive();
     var foeName = foe ? (foe.name || foe.species || 'Opponent').replace(/^p[12]:\s*/i, '') : 'Opponent';
 
-    var name = mon ? mon.details.split(',')[0] : (switchBtn ? switchBtn.innerText.split('\\n')[0] : ('Slot ' + slot));
-    var html = '';
+    var rawDetails = mon ? mon.details.split(',')[0] : ('Slot ' + slot);
+    var speciesKey = rawDetails.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    var pDex = (window.BattlePokedex && BattlePokedex[speciesKey]) || (window.Dex && Dex.species ? Dex.species.get(speciesKey) : null);
 
+    var monTypes = (mon && mon.types) || (pDex && pDex.types) || [];
+    var monSpeed = (mon && mon.stats && mon.stats.spe) ? mon.stats.spe : (pDex && pDex.baseStats ? pDex.baseStats.spe : '—');
+
+    var html = '';
     if (mon) {
-      html += '<div><b>HP:</b> ' + mon.condition + '</div>';
+      html += '<div><b>Types:</b> ' + (monTypes.join(' / ') || 'Unknown') + (mon.teraType ? ' (Tera: ' + mon.teraType + ')' : '') + '</div>';
+      html += '<div><b>Speed:</b> <span style="color:#00ffcc;font-weight:bold;">' + monSpeed + '</span> &nbsp;|&nbsp; <b>HP:</b> ' + mon.condition + '</div>';
       if (mon.item) html += '<div><b>Item:</b> ' + mon.item + '</div>';
       if (mon.ability) html += '<div><b>Ability:</b> ' + mon.ability + '</div>';
-      if (mon.teraType) html += '<div><b>Tera Type:</b> ' + mon.teraType + '</div>';
 
       if (mon.moves && mon.moves.length) {
         html += '<div style="margin-top:4px;border-top:1px solid #333;padding-top:3px;"><b>Bench Moves vs ' + foeName + ':</b></div>';
@@ -677,16 +695,14 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       }
 
       if (mon.active) html += '<div style="color:#00ffcc;font-weight:bold;margin-top:2px;">[CURRENTLY ACTIVE]</div>';
-    } else if (switchBtn) {
-      html = '<div>' + switchBtn.innerText.replace(/\\n/g, '<br>') + '</div>';
     } else {
       html = '<div>No data available for Slot ' + slot + '</div>';
     }
 
-    showInspector('🔄 Switch Slot ' + slot + '/6: ' + name, html, 'switch', slot);
+    showInspector('🔄 Switch Slot ' + slot + '/6: ' + rawDetails, html, 'switch', slot);
   }
 
-  // Extract Opponent Profile & Speed Range
+  // Extract Opponent Profile & Official Level-Scaled Speed Calculation
   function inspectOpponent() {
     var foe = getOpponentActive();
     var foeTypes = getOpponentTypes();
@@ -699,13 +715,35 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     var cleanName = (foe.name || foe.species || 'Unknown').replace(/^p[12]:\s*/i, '');
     var speciesKey = cleanName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
     var pDex = (window.BattlePokedex && BattlePokedex[speciesKey]) || (window.Dex && Dex.species ? Dex.species.get(speciesKey) : {});
-    var baseSpe = (pDex.baseStats && pDex.baseStats.spe) || (pDex.spe) || '—';
+    var baseSpe = (pDex.baseStats && pDex.baseStats.spe) || (pDex.spe) || 0;
 
-    var speedRange = '—';
-    if (typeof baseSpe === 'number') {
-      var minSpe = Math.floor((2 * baseSpe + 5) * 0.9);
-      var maxSpe = Math.floor((2 * baseSpe + 99) * 1.1);
-      speedRange = minSpe + ' - ' + maxSpe + ' (Base: ' + baseSpe + ')';
+    // Determine target level
+    var level = 100;
+    if (foe.level) {
+      level = Number(foe.level);
+    } else if (foe.details) {
+      var lvlMatch = foe.details.match(/L(\d+)/);
+      if (lvlMatch) level = parseInt(lvlMatch[1], 10);
+    }
+
+    // Official Showdown Level-Scaled Formula
+    var speedText = '—';
+    if (baseSpe > 0) {
+      var minMin = Math.floor((Math.floor((2 * baseSpe) * level / 100) + 5) * 0.9);
+      var minNeutral = Math.floor((2 * baseSpe + 31) * level / 100) + 5;
+      var maxMax = Math.floor((Math.floor((2 * baseSpe + 94) * level / 100) + 5) * 1.1);
+
+      // Apply stat stage boosts/drops if present
+      var speBoost = (foe.boosts && foe.boosts.spe) ? foe.boosts.spe : 0;
+      if (speBoost !== 0) {
+        var mult = (speBoost > 0) ? (2 + speBoost) / 2 : 2 / (2 - speBoost);
+        minMin = Math.floor(minMin * mult);
+        minNeutral = Math.floor(minNeutral * mult);
+        maxMax = Math.floor(maxMax * mult);
+      }
+
+      var boostLabel = speBoost !== 0 ? ' (' + (speBoost > 0 ? '+' : '') + speBoost + ')' : '';
+      speedText = minNeutral + ' to ' + maxMax + boostLabel + ' <span style="color:#888;font-size:9px;">(Min: ' + minMin + ', Base: ' + baseSpe + ')</span>';
     }
 
     var weak = [], resist = [], immune = [];
@@ -719,7 +757,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
     var html = '';
     html += '<div><b>Types:</b> ' + (foeTypes.join(' / ') || 'Unknown') + '</div>';
-    html += '<div><b>Estimated Speed (Lv100):</b> ' + speedRange + '</div>';
+    html += '<div><b>Speed (Lv ' + level + '):</b> ' + speedText + '</div>';
     if (foe.item) html += '<div><b>Known Item:</b> ' + foe.item + '</div>';
     if (foe.ability) html += '<div><b>Ability:</b> ' + foe.ability + '</div>';
 
@@ -893,7 +931,7 @@ app.use((req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. WebSocket Upgrade Listener
+// 4. Native WebSocket Upgrade Listener
 // ---------------------------------------------------------------------------
 const server = http.createServer(app);
 
