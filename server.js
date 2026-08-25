@@ -61,17 +61,25 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
       const injectedHead = `
 <style>
-  /* 1. Suppress native hover tooltips */
-  #tooltipwrapper, .tooltip, .tooltipwrapper, div[class*="tooltip"], .battle-log-tag {
+  /* 1. Complete Suppression of Native Showdown Tooltips */
+  #tooltipwrapper,
+  .tooltip,
+  .tooltipwrapper,
+  .tooltip-inner,
+  div[class*="tooltip"],
+  .battle-log-tag {
     display: none !important;
     visibility: hidden !important;
     opacity: 0 !important;
     pointer-events: none !important;
-    top: -9999px !important;
     position: absolute !important;
+    top: -9999px !important;
+    left: -9999px !important;
+    width: 0 !important;
+    height: 0 !important;
   }
 
-  /* 2. Suppress on-screen mobile chat buttons */
+  /* 2. Obliterate on-screen mobile chat buttons and side logs */
   button[name="openChat"],
   button[name="closeChat"],
   button[name="openBattleLog"],
@@ -102,7 +110,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
   button:focus, a:focus, input:focus, select:focus {
     outline: 2px solid #ffcc00 !important;
     outline-offset: 1px !important;
-    box-shadow: 0 0 6px #ffcc00 !important;
+    box-shadow: 0 0 5px #ffcc00 !important;
   }
 
   /* 5. Chat Modal Internal Styling */
@@ -118,14 +126,14 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     font-style: italic !important;
   }
 
-  /* 6. Effectiveness Badges */
+  /* 6. Compact Effectiveness Badges */
   .eff-badge {
     display: inline-block;
-    padding: 1px 4px;
-    border-radius: 3px;
+    padding: 1px 3px;
+    border-radius: 2px;
     font-weight: bold;
-    font-size: 10px;
-    margin: 1px 2px;
+    font-size: 9px;
+    margin: 1px 1px;
   }
   .eff-super { background: #1b5e20; color: #a5d6a7; border: 1px solid #4caf50; }
   .eff-neutral { background: #37474f; color: #eceff1; }
@@ -180,19 +188,19 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
   function formatMultiplierBadge(mult) {
     if (mult === 0) return '<span class="eff-badge eff-immune">Immune (0×)</span>';
-    if (mult >= 2) return '<span class="eff-badge eff-super">Super Effective (' + mult + '×)</span>';
-    if (mult <= 0.5) return '<span class="eff-badge eff-resist">Not Effective (' + mult + '×)</span>';
+    if (mult >= 2) return '<span class="eff-badge eff-super">Super Eff (' + mult + '×)</span>';
+    if (mult <= 0.5) return '<span class="eff-badge eff-resist">Not Eff (' + mult + '×)</span>';
     return '<span class="eff-badge eff-neutral">Neutral (1×)</span>';
   }
 
-  // --- INSPECTOR MODAL ---
+  // --- COMPACT 240x320 INSPECTOR MODAL ---
   function getInspectorEl() {
     var el = document.getElementById('cp-inspector');
     if (!el) {
       el = document.createElement('div');
       el.id = 'cp-inspector';
-      el.style.cssText = 'position:fixed!important;top:50%!important;left:50%!important;transform:translate(-50%,-50%)!important;width:224px!important;max-height:275px!important;background:#0e121a!important;border:2px solid #ffd700!important;border-radius:6px!important;color:#fff!important;padding:8px!important;z-index:2147483647!important;font-family:sans-serif!important;font-size:11px!important;line-height:1.35!important;box-shadow:0 0 20px rgba(0,0,0,0.95)!important;box-sizing:border-box!important;display:none;overflow-y:auto!important;';
-      el.innerHTML = '<div id="cp-insp-title" style="font-size:12px;font-weight:bold;color:#ffd700;margin-bottom:4px;border-bottom:1px solid #333;padding-bottom:2px;"></div><div id="cp-insp-body" style="color:#e0e0e0;margin-bottom:6px;"></div><div id="cp-insp-footer" style="font-size:10px;color:#00ffcc;font-weight:bold;text-align:center;border-top:1px solid #333;padding-top:4px;">[CALL/OK] Use | [D-Pad] Cycle | [#] Close</div>';
+      el.style.cssText = 'position:fixed!important;top:50%!important;left:50%!important;transform:translate(-50%,-50%)!important;width:216px!important;max-height:235px!important;background:#0e121a!important;border:2px solid #ffd700!important;border-radius:5px!important;color:#fff!important;padding:5px 6px!important;z-index:2147483647!important;font-family:sans-serif!important;font-size:10px!important;line-height:1.25!important;box-shadow:0 0 16px rgba(0,0,0,0.95)!important;box-sizing:border-box!important;display:none;overflow-y:auto!important;';
+      el.innerHTML = '<div id="cp-insp-title" style="font-size:11px;font-weight:bold;color:#ffd700;margin-bottom:3px;border-bottom:1px solid #333;padding-bottom:1px;"></div><div id="cp-insp-body" style="color:#e0e0e0;margin-bottom:4px;max-height:165px;overflow-y:auto;"></div><div id="cp-insp-footer" style="font-size:9px;color:#00ffcc;font-weight:bold;text-align:center;border-top:1px solid #333;padding-top:2px;">[CALL/OK] Use | [D-Pad] Cycle | [#] Close</div>';
       document.body.appendChild(el);
     }
     return el;
@@ -218,20 +226,20 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     activeInspectIndex = Number(index) || 1;
   }
 
-  // --- FLOATING CHAT & LOG MODAL (KEY 9) ---
+  // --- COMPACT CHAT & LOG MODAL (KEY 9) ---
   function getChatModalEl() {
     var el = document.getElementById('cp-chat-modal');
     if (!el) {
       el = document.createElement('div');
       el.id = 'cp-chat-modal';
-      el.style.cssText = 'position:fixed!important;top:50%!important;left:50%!important;transform:translate(-50%,-50%)!important;width:228px!important;height:280px!important;background:#0c1016!important;border:2px solid #00ffcc!important;border-radius:6px!important;color:#e0e0e0!important;padding:6px!important;z-index:2147483646!important;font-family:sans-serif!important;font-size:10px!important;line-height:1.3!important;box-shadow:0 0 25px rgba(0,0,0,0.98)!important;box-sizing:border-box!important;display:none;flex-direction:column!important;';
-      el.innerHTML = '<div style="font-size:11px;font-weight:bold;color:#00ffcc;border-bottom:1px solid #333;padding-bottom:2px;margin-bottom:4px;display:flex;justify-content:space-between;"><span>💬 Battle Chat & Log</span><span style="color:#888;font-size:9px;">[#] Close</span></div>' +
-                     '<div id="cp-chat-content" style="flex:1!important;overflow-y:auto!important;margin-bottom:6px;padding-right:2px;word-break:break-word;"></div>' +
-                     '<form id="cp-chat-form" style="display:flex;gap:3px;margin:0;padding:0;">' +
-                       '<input type="text" id="cp-chat-input" placeholder="Type msg..." style="flex:1;min-width:0;background:#18202c;border:1px solid #00ffcc;border-radius:3px;color:#fff;font-size:10px;padding:3px 5px;box-sizing:border-box;" />' +
-                       '<button type="submit" style="background:#00aa88;border:none;border-radius:3px;color:#fff;font-size:9px;font-weight:bold;padding:0 6px;cursor:pointer;">Send</button>' +
+      el.style.cssText = 'position:fixed!important;top:50%!important;left:50%!important;transform:translate(-50%,-50%)!important;width:216px!important;height:245px!important;background:#0c1016!important;border:2px solid #00ffcc!important;border-radius:5px!important;color:#e0e0e0!important;padding:5px!important;z-index:2147483646!important;font-family:sans-serif!important;font-size:9.5px!important;line-height:1.25!important;box-shadow:0 0 20px rgba(0,0,0,0.98)!important;box-sizing:border-box!important;display:none;flex-direction:column!important;';
+      el.innerHTML = '<div style="font-size:10px;font-weight:bold;color:#00ffcc;border-bottom:1px solid #333;padding-bottom:2px;margin-bottom:3px;display:flex;justify-content:space-between;"><span>💬 Battle Log & Chat</span><span style="color:#888;font-size:8.5px;">[#] Close</span></div>' +
+                     '<div id="cp-chat-content" style="flex:1!important;overflow-y:auto!important;margin-bottom:4px;padding-right:2px;word-break:break-word;"></div>' +
+                     '<form id="cp-chat-form" style="display:flex;gap:2px;margin:0;padding:0;">' +
+                       '<input type="text" id="cp-chat-input" placeholder="Type..." style="flex:1;min-width:0;background:#18202c;border:1px solid #00ffcc;border-radius:3px;color:#fff;font-size:9px;padding:2px 4px;box-sizing:border-box;" />' +
+                       '<button type="submit" style="background:#00aa88;border:none;border-radius:3px;color:#fff;font-size:9px;font-weight:bold;padding:0 5px;cursor:pointer;">Send</button>' +
                      '</form>' +
-                     '<div style="font-size:8px;color:#777;text-align:center;margin-top:3px;">[D-Pad Up/Down] Scroll &nbsp;|&nbsp; [OK] Type/Send</div>';
+                     '<div style="font-size:8px;color:#777;text-align:center;margin-top:2px;">[D-Pad Up/Down] Scroll &nbsp;|&nbsp; [OK] Type/Send</div>';
       document.body.appendChild(el);
 
       var form = document.getElementById('cp-chat-form');
@@ -270,15 +278,13 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     }
 
     if (sourceEl) {
-      var isNearBottom = (contentEl.scrollHeight - contentEl.scrollTop - contentEl.clientHeight) < 50;
+      var isNearBottom = (contentEl.scrollHeight - contentEl.scrollTop - contentEl.clientHeight) < 40;
       if (contentEl.innerHTML !== sourceEl.innerHTML) {
         contentEl.innerHTML = sourceEl.innerHTML;
-        if (isNearBottom) {
-          contentEl.scrollTop = contentEl.scrollHeight;
-        }
+        if (isNearBottom) contentEl.scrollTop = contentEl.scrollHeight;
       }
     } else if (contentEl.children.length === 0) {
-      contentEl.innerHTML = '<div style="color:#777;padding:12px 0;text-align:center;">No battle log or messages yet.</div>';
+      contentEl.innerHTML = '<div style="color:#777;padding:10px 0;text-align:center;">No log or messages yet.</div>';
     }
   }
 
@@ -289,11 +295,8 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     if (!msg) return;
 
     var room = getBattleRoom();
-    if (room && typeof room.send === 'function') {
-      room.send(msg);
-    } else if (window.app && typeof app.send === 'function') {
-      app.send(msg);
-    }
+    if (room && typeof room.send === 'function') room.send(msg);
+    else if (window.app && typeof app.send === 'function') app.send(msg);
 
     input.value = '';
     setTimeout(syncChatContent, 100);
@@ -345,6 +348,22 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     return null;
   }
 
+  // Get only alive, non-active Pokémon slots for clean switching
+  function getValidSwitchSlots() {
+    var req = getBattleRequest();
+    var valid = [];
+    if (req && req.side && req.side.pokemon) {
+      for (var i = 0; i < req.side.pokemon.length; i++) {
+        var p = req.side.pokemon[i];
+        var isDead = p.condition && p.condition.includes('fnt');
+        if (!p.active && !isDead) {
+          valid.push(i + 1); // 1-indexed slot
+        }
+      }
+    }
+    return valid.length > 0 ? valid : [1];
+  }
+
   function getOpponentActive() {
     var room = getBattleRoom();
     if (!room || !room.battle) return null;
@@ -370,12 +389,10 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     return null;
   }
 
-  // Robust Type Fetcher with Active Terastallization Priority
   function getOpponentTypes() {
     var foe = getOpponentActive();
     if (!foe) return [];
 
-    // Prioritize active Tera type
     if (foe.terastallized && typeof foe.terastallized === 'string' && foe.terastallized !== 'Stellar') {
       return [foe.terastallized];
     }
@@ -383,7 +400,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       return [foe.teraType];
     }
 
-    // Native types
     if (foe.types && foe.types.length) return foe.types;
     if (foe.speciesData && foe.speciesData.types) return foe.speciesData.types;
 
@@ -448,13 +464,13 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       }
 
       if (isUp && contentEl) {
-        contentEl.scrollTop -= 40;
+        contentEl.scrollTop -= 35;
         e.preventDefault();
         e.stopImmediatePropagation();
         return;
       }
       if (isDown && contentEl) {
-        contentEl.scrollTop += 40;
+        contentEl.scrollTop += 35;
         e.preventDefault();
         e.stopImmediatePropagation();
         return;
@@ -481,21 +497,25 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
     if (activeInspectType && (isLeft || isRight || isUp || isDown)) {
       if (isLeft || isRight) {
-        var delta = isRight ? 1 : -1;
         if (activeInspectType === 'move') {
+          var delta = isRight ? 1 : -1;
           var nextMove = activeInspectIndex + delta;
           if (nextMove > 4) nextMove = 1;
           if (nextMove < 1) nextMove = 4;
           inspectMove(nextMove);
         } else if (activeInspectType === 'switch') {
-          var nextSwitch = activeInspectIndex + delta;
-          if (nextSwitch > 6) nextSwitch = 1;
-          if (nextSwitch < 1) nextSwitch = 6;
-          inspectPokemon(nextSwitch);
+          var validSlots = getValidSwitchSlots();
+          var curIdx = validSlots.indexOf(activeInspectIndex);
+          if (curIdx === -1) curIdx = 0;
+          var nextIdx = curIdx + (isRight ? 1 : -1);
+          if (nextIdx >= validSlots.length) nextIdx = 0;
+          if (nextIdx < 0) nextIdx = validSlots.length - 1;
+          inspectPokemon(validSlots[nextIdx]);
         }
       } else if (isUp || isDown) {
         if (activeInspectType === 'move') {
-          inspectPokemon(1);
+          var switchSlots = getValidSwitchSlots();
+          inspectPokemon(switchSlots[0] || 1);
         } else if (activeInspectType === 'switch') {
           inspectOpponent();
         } else if (activeInspectType === 'opponent') {
@@ -524,12 +544,19 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       } else if (activeInspectType === 'switch') {
         var req = getBattleRequest();
         var mon = req && req.side && req.side.pokemon && req.side.pokemon[activeInspectIndex - 1];
-        var monSpecies = mon ? mon.details.split(',')[0].trim().toLowerCase() : '';
 
+        // Guard against fainted pokemon switch attempts
+        if (mon && mon.condition && mon.condition.includes('fnt')) {
+          hideInspector();
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          return;
+        }
+
+        var monSpecies = mon ? mon.details.split(',')[0].trim().toLowerCase() : '';
         var switchBtns = document.querySelectorAll('button[name="chooseSwitch"], button.switchselect');
         var targetBtn = null;
 
-        // 1. Match exactly by Pokémon species name
         for (var s = 0; s < switchBtns.length; s++) {
           var btnText = switchBtns[s].innerText.toLowerCase();
           if (monSpecies && btnText.includes(monSpecies)) {
@@ -538,7 +565,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
           }
         }
 
-        // 2. Fallback: match by integer value
         if (!targetBtn) {
           for (var s = 0; s < switchBtns.length; s++) {
             var btnVal = parseInt(switchBtns[s].value, 10);
@@ -596,8 +622,9 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
         var focused = document.activeElement;
         if (focused && focused.name === 'chooseMove') {
           inspectMove(focused.value || '1');
-        } else if (focused && focused.name === 'chooseSwitch') {
-          inspectPokemon(focused.value || '1');
+        } else if (focused && (focused.name === 'chooseSwitch' || focused.classList.contains('switchselect'))) {
+          var validSlots = getValidSwitchSlots();
+          inspectPokemon(validSlots[0] || 1);
         } else {
           inspectMove('1');
         }
@@ -674,15 +701,15 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     var activeSpeed = (activeMon && activeMon.stats && activeMon.stats.spe) ? activeMon.stats.spe : (activeDex && activeDex.baseStats ? activeDex.baseStats.spe : '—');
 
     var html = '';
-    html += '<div style="background:rgba(255,255,255,0.05);padding:2px 4px;border-radius:3px;margin-bottom:4px;font-size:10px;">' +
-            '<b>' + activeSpecies + '</b> (' + (activeTypes.join('/') || '—') + (activeMon && activeMon.teraType ? ' [Tera ' + activeMon.teraType + ']' : '') + ') &nbsp;|&nbsp; <b>Spe:</b> ' + activeSpeed + '</div>';
+    html += '<div style="background:rgba(255,255,255,0.06);padding:2px 4px;border-radius:3px;margin-bottom:3px;font-size:9.5px;">' +
+            '<b>' + activeSpecies + '</b> (' + (activeTypes.join('/') || '—') + (activeMon && activeMon.teraType ? ' [' + activeMon.teraType + ']' : '') + ') &nbsp;|&nbsp; <b>Spe:</b> ' + activeSpeed + '</div>';
 
     html += '<div><b>Type:</b> ' + type + ' ' + (category ? '(' + category + ')' : '') + '</div>';
-    html += '<div><b>Power:</b> ' + bp + ' &nbsp;|&nbsp; <b>Acc:</b> ' + acc + ' &nbsp;|&nbsp; <b>PP:</b> ' + ppText + '</div>';
-    html += '<div style="margin: 4px 0;"><b>Vs ' + foeName + ' (' + (foeTypes.join('/') || 'Unknown') + '):</b><br>' + effHtml + '</div>';
+    html += '<div><b>BP:</b> ' + bp + ' &nbsp;|&nbsp; <b>Acc:</b> ' + acc + ' &nbsp;|&nbsp; <b>PP:</b> ' + ppText + '</div>';
+    html += '<div style="margin: 3px 0;"><b>Vs ' + foeName + ' (' + (foeTypes.join('/') || '—') + '):</b><br>' + effHtml + '</div>';
 
     if (dexData && (dexData.shortDesc || dexData.desc)) {
-      html += '<div style="margin-top:4px;color:#bbb;font-size:10px;">' + (dexData.shortDesc || dexData.desc) + '</div>';
+      html += '<div style="margin-top:2px;color:#bbb;font-size:9px;">' + (dexData.shortDesc || dexData.desc) + '</div>';
     }
 
     if (reqMove && reqMove.disabled) {
@@ -692,7 +719,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     showInspector('⚡ Move ' + index + '/4: ' + moveName, html, 'move', index);
   }
 
-  // Extract Switch Slot Details, Types, Exact Speed & Matchups
+  // Extract Switch Slot Details (Omits dead Pokémon from normal cycle)
   function inspectPokemon(slot) {
     slot = Number(slot) || 1;
     var req = getBattleRequest();
@@ -711,13 +738,14 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
     var html = '';
     if (mon) {
-      html += '<div><b>Types:</b> ' + (monTypes.join(' / ') || 'Unknown') + (mon.teraType ? ' (Tera: ' + mon.teraType + ')' : '') + '</div>';
+      var isDead = mon.condition && mon.condition.includes('fnt');
+      html += '<div><b>Types:</b> ' + (monTypes.join(' / ') || 'Unknown') + (mon.teraType ? ' [Tera: ' + mon.teraType + ']' : '') + '</div>';
       html += '<div><b>Speed:</b> <span style="color:#00ffcc;font-weight:bold;">' + monSpeed + '</span> &nbsp;|&nbsp; <b>HP:</b> ' + mon.condition + '</div>';
       if (mon.item) html += '<div><b>Item:</b> ' + mon.item + '</div>';
       if (mon.ability) html += '<div><b>Ability:</b> ' + mon.ability + '</div>';
 
-      if (mon.moves && mon.moves.length) {
-        html += '<div style="margin-top:4px;border-top:1px solid #333;padding-top:3px;"><b>Bench Moves vs ' + foeName + ':</b></div>';
+      if (mon.moves && mon.moves.length && !isDead) {
+        html += '<div style="margin-top:3px;border-top:1px solid #333;padding-top:2px;"><b>Bench Moves vs ' + foeName + ':</b></div>';
         for (var i = 0; i < mon.moves.length; i++) {
           var mName = mon.moves[i];
           var mId = mName.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -726,12 +754,16 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
           var mCategory = (mData && mData.category) || '';
           var mult = (mCategory === 'Status') ? 1 : getEffectiveness(mType, foeTypes);
 
-          html += '<div style="font-size:10px;margin:1px 0;">• ' + mName + ' (' + mType + '): ' +
+          html += '<div style="font-size:9px;margin:1px 0;">• ' + mName + ' (' + mType + '): ' +
                   ((mCategory === 'Status') ? '<span style="color:#aaa;">Status</span>' : (mult + '×')) + '</div>';
         }
       }
 
-      if (mon.active) html += '<div style="color:#00ffcc;font-weight:bold;margin-top:2px;">[CURRENTLY ACTIVE]</div>';
+      if (isDead) {
+        html += '<div style="color:#ff5555;font-weight:bold;margin-top:3px;">[FAINTED]</div>';
+      } else if (mon.active) {
+        html += '<div style="color:#00ffcc;font-weight:bold;margin-top:3px;">[CURRENTLY IN BATTLE]</div>';
+      }
     } else {
       html = '<div>No data available for Slot ' + slot + '</div>';
     }
@@ -777,20 +809,18 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       }
 
       var boostLabel = speBoost !== 0 ? ' (' + (speBoost > 0 ? '+' : '') + speBoost + ')' : '';
-      speedText = minNeutral + ' to ' + maxMax + boostLabel + ' <span style="color:#888;font-size:9px;">(Min: ' + minMin + ', Base: ' + baseSpe + ')</span>';
+      speedText = minNeutral + ' - ' + maxMax + boostLabel + ' <span style="color:#888;font-size:8.5px;">(Min ' + minMin + ', Base ' + baseSpe + ')</span>';
     }
 
-    // Item Resolution
     var itemText = foe.item || (foe.prevItem ? (foe.prevItem + ' (Lost)') : 'Unrevealed / None');
 
-    // Ability Resolution (Revealed or Possible list from Dex)
     var abilityText = foe.ability || '';
     if (!abilityText && pDex && pDex.abilities) {
       var abList = [];
       for (var k in pDex.abilities) {
         abList.push(pDex.abilities[k]);
       }
-      abilityText = abList.join(', ') + ' <span style="color:#888;font-size:9px;">(Possible)</span>';
+      abilityText = abList.join(', ') + ' <span style="color:#888;font-size:8.5px;">(Possible)</span>';
     }
     if (!abilityText) abilityText = 'Unknown';
 
@@ -812,10 +842,10 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     html += '<div><b>Ability:</b> ' + abilityText + '</div>';
 
     if (foe.moves && foe.moves.length) {
-      html += '<div style="margin-top:4px;"><b>Revealed Moves:</b> ' + foe.moves.join(', ') + '</div>';
+      html += '<div style="margin-top:3px;"><b>Revealed Moves:</b> ' + foe.moves.join(', ') + '</div>';
     }
 
-    html += '<div style="margin-top:4px;border-top:1px solid #333;padding-top:3px;"><b>Defensive Profile:</b></div>';
+    html += '<div style="margin-top:3px;border-top:1px solid #333;padding-top:2px;"><b>Defensive Profile:</b></div>';
     if (weak.length) html += '<div style="margin:1px 0;"><span style="color:#a5d6a7;font-weight:bold;">Weak:</span> ' + weak.join(', ') + '</div>';
     if (resist.length) html += '<div style="margin:1px 0;"><span style="color:#ef9a9a;font-weight:bold;">Resist:</span> ' + resist.join(', ') + '</div>';
     if (immune.length) html += '<div style="margin:1px 0;"><span style="color:#9e9e9e;font-weight:bold;">Immune:</span> ' + immune.join(', ') + '</div>';
@@ -823,27 +853,35 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     showInspector('🎯 Opponent: ' + cleanName, html, 'opponent', 1);
   }
 
-  // 3. Automated DOM Sweeper & Tooltip Neutralization
+  // 3. Automated DOM Sweeper & Comprehensive Tooltip Override
   function patchShowdown() {
     var chatElements = document.querySelectorAll('button[name="openChat"], button[name="openBattleLog"], button.battle-chat-toggle, .battle-chat-toggle, .chat-toggle');
     for (var i = 0; i < chatElements.length; i++) {
       chatElements[i].remove();
     }
 
+    var tooltips = document.querySelectorAll('#tooltipwrapper, .tooltip, .tooltipwrapper, div[class*="tooltip"]');
+    for (var j = 0; j < tooltips.length; j++) {
+      tooltips[j].style.setProperty('display', 'none', 'important');
+    }
+
     if (window.BattleTooltips) {
       BattleTooltips.prototype.showTooltip = function() {};
       BattleTooltips.prototype.showMoveTooltip = function() {};
       BattleTooltips.prototype.showPokemonTooltip = function() {};
+      BattleTooltips.prototype.showCustomTooltip = function() {};
+      BattleTooltips.prototype.showPinnedTooltip = function() {};
       BattleTooltips.prototype.hideTooltip = function() {};
     }
     if (window.app) {
       app.showTooltip = function() {};
+      app.hideTooltip = function() {};
       app.focusPrevRoom = function() {};
       app.focusNextRoom = function() {};
     }
   }
 
-  setInterval(patchShowdown, 250);
+  setInterval(patchShowdown, 200);
 
   // 4. Auto-Connect Polling Loop
   function attemptConnect() {
