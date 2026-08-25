@@ -61,25 +61,45 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
       const injectedHead = `
 <style>
-  /* 1. Complete Suppression of Native Showdown Tooltips */
-  #tooltipwrapper,
-  .tooltip,
-  .tooltipwrapper,
-  .tooltip-inner,
-  div[class*="tooltip"],
-  .battle-log-tag {
-    display: none !important;
-    visibility: hidden !important;
-    opacity: 0 !important;
+  /* 1. Compact Native Showdown Hover Tooltips (Positioned at Top, Scaled for 240x320) */
+  #tooltipwrapper {
+    position: fixed !important;
+    top: 34px !important;
+    left: 50% !important;
+    transform: translateX(-50%) !important;
+    width: 216px !important;
+    max-width: 90vw !important;
+    max-height: 125px !important;
+    overflow-y: auto !important;
+    background: rgba(14, 18, 26, 0.96) !important;
+    border: 2px solid #ffd700 !important;
+    border-radius: 4px !important;
+    font-size: 9.5px !important;
+    line-height: 1.2 !important;
+    z-index: 2147483645 !important;
+    box-shadow: 0 0 12px rgba(0,0,0,0.95) !important;
     pointer-events: none !important;
-    position: absolute !important;
-    top: -9999px !important;
-    left: -9999px !important;
-    width: 0 !important;
-    height: 0 !important;
+    box-sizing: border-box !important;
+  }
+  #tooltipwrapper .tooltip {
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    font-size: 9.5px !important;
+    padding: 4px 6px !important;
+    color: #e0e0e0 !important;
+  }
+  #tooltipwrapper .tooltip h2 {
+    font-size: 11px !important;
+    margin: 0 0 2px 0 !important;
+    color: #ffd700 !important;
+  }
+  #tooltipwrapper .tooltip p {
+    margin: 2px 0 !important;
+    font-size: 9px !important;
   }
 
-  /* 2. Obliterate on-screen mobile chat buttons and side logs */
+  /* 2. Obliterate on-screen mobile chat buttons */
   button[name="openChat"],
   button[name="closeChat"],
   button[name="openBattleLog"],
@@ -101,7 +121,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     left: -9999px !important;
   }
 
-  /* 3. Hide side chat log in normal view */
+  /* 3. Hide background side chat log */
   .battle-log, .chat-log {
     display: none !important;
   }
@@ -132,7 +152,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     padding: 1px 3px;
     border-radius: 2px;
     font-weight: bold;
-    font-size: 9px;
+    font-size: 8.5px;
     margin: 1px 1px;
   }
   .eff-super { background: #1b5e20; color: #a5d6a7; border: 1px solid #4caf50; }
@@ -151,6 +171,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
   var activeInspectType = null; // 'move' | 'switch' | 'opponent'
   var activeInspectIndex = 1;
+  var isPinned = false;
   var chatSyncTimer = null;
 
   var TYPE_LIST = ['Normal','Fire','Water','Electric','Grass','Ice','Fighting','Poison','Ground','Flying','Psychic','Bug','Rock','Ghost','Dragon','Dark','Steel','Fairy'];
@@ -199,8 +220,8 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     if (!el) {
       el = document.createElement('div');
       el.id = 'cp-inspector';
-      el.style.cssText = 'position:fixed!important;top:50%!important;left:50%!important;transform:translate(-50%,-50%)!important;width:216px!important;max-height:235px!important;background:#0e121a!important;border:2px solid #ffd700!important;border-radius:5px!important;color:#fff!important;padding:5px 6px!important;z-index:2147483647!important;font-family:sans-serif!important;font-size:10px!important;line-height:1.25!important;box-shadow:0 0 16px rgba(0,0,0,0.95)!important;box-sizing:border-box!important;display:none;overflow-y:auto!important;';
-      el.innerHTML = '<div id="cp-insp-title" style="font-size:11px;font-weight:bold;color:#ffd700;margin-bottom:3px;border-bottom:1px solid #333;padding-bottom:1px;"></div><div id="cp-insp-body" style="color:#e0e0e0;margin-bottom:4px;max-height:165px;overflow-y:auto;"></div><div id="cp-insp-footer" style="font-size:9px;color:#00ffcc;font-weight:bold;text-align:center;border-top:1px solid #333;padding-top:2px;">[CALL/OK] Use | [D-Pad] Cycle | [#] Close</div>';
+      el.style.cssText = 'position:fixed!important;top:32px!important;left:50%!important;transform:translateX(-50%)!important;width:216px!important;max-height:135px!important;background:#0e121a!important;border:2px solid #ffd700!important;border-radius:4px!important;color:#fff!important;padding:4px 6px!important;z-index:2147483647!important;font-family:sans-serif!important;font-size:9.5px!important;line-height:1.2!important;box-shadow:0 0 16px rgba(0,0,0,0.95)!important;box-sizing:border-box!important;display:none;overflow-y:auto!important;';
+      el.innerHTML = '<div id="cp-insp-title" style="font-size:10.5px;font-weight:bold;color:#ffd700;margin-bottom:2px;border-bottom:1px solid #333;padding-bottom:1px;"></div><div id="cp-insp-body" style="color:#e0e0e0;margin-bottom:3px;max-height:85px;overflow-y:auto;"></div><div id="cp-insp-footer" style="font-size:8.5px;color:#00ffcc;font-weight:bold;text-align:center;border-top:1px solid #333;padding-top:2px;">[CALL/OK] Use | [D-Pad] Cycle | [#] Close</div>';
       document.body.appendChild(el);
     }
     return el;
@@ -210,20 +231,26 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     var el = getInspectorEl();
     el.style.setProperty('display', 'none', 'important');
     activeInspectType = null;
+    isPinned = false;
   }
 
-  function showInspector(title, bodyHtml, type, index) {
+  function showInspector(title, bodyHtml, type, index, pinned) {
     hideChatModal();
     var el = getInspectorEl();
     var titleEl = document.getElementById('cp-insp-title');
     var bodyEl = document.getElementById('cp-insp-body');
+    var footEl = document.getElementById('cp-insp-footer');
 
     if (titleEl) titleEl.innerHTML = title;
     if (bodyEl) bodyEl.innerHTML = bodyHtml;
+    if (footEl) {
+      footEl.innerHTML = pinned ? '[CALL/OK] Use | [D-Pad] Cycle | [#] Close' : '[0] Pin / Lock Info';
+    }
 
     el.style.setProperty('display', 'block', 'important');
     activeInspectType = type;
     activeInspectIndex = Number(index) || 1;
+    isPinned = !!pinned;
   }
 
   // --- COMPACT CHAT & LOG MODAL (KEY 9) ---
@@ -413,6 +440,34 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     return [];
   }
 
+  // --- HOVER & FOCUS EVENT DELEGATION ---
+  document.addEventListener('mouseover', handleElementHover, true);
+  document.addEventListener('focusin', handleElementHover, true);
+  document.addEventListener('mouseout', handleElementBlur, true);
+  document.addEventListener('focusout', handleElementBlur, true);
+
+  function handleElementHover(e) {
+    if (isPinned || isChatModalOpen()) return;
+    var target = e.target && e.target.closest ? e.target.closest('button, a, .pokemon') : null;
+    if (!target) return;
+
+    if (target.name === 'chooseMove' || target.hasAttribute('data-move')) {
+      var moveIdx = target.value || target.getAttribute('data-move-index') || '1';
+      inspectMove(moveIdx, false);
+    } else if (target.name === 'chooseSwitch' || target.classList.contains('switchselect')) {
+      var slotIdx = target.value || target.getAttribute('data-slot') || '1';
+      inspectPokemon(slotIdx, false);
+    }
+  }
+
+  function handleElementBlur(e) {
+    if (isPinned || isChatModalOpen()) return;
+    var target = e.target && e.target.closest ? e.target.closest('button, a, .pokemon') : null;
+    if (target && (target.name === 'chooseMove' || target.name === 'chooseSwitch' || target.classList.contains('switchselect'))) {
+      hideInspector();
+    }
+  }
+
   // 1. Release Isolation
   window.addEventListener('keyup', function(e) {
     var code = e.keyCode || e.which;
@@ -495,14 +550,14 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     var isLeft = (key === 'ArrowLeft' || code === 37);
     var isRight = (key === 'ArrowRight' || code === 39);
 
-    if (activeInspectType && (isLeft || isRight || isUp || isDown)) {
+    if (isPinned && (isLeft || isRight || isUp || isDown)) {
       if (isLeft || isRight) {
         if (activeInspectType === 'move') {
           var delta = isRight ? 1 : -1;
           var nextMove = activeInspectIndex + delta;
           if (nextMove > 4) nextMove = 1;
           if (nextMove < 1) nextMove = 4;
-          inspectMove(nextMove);
+          inspectMove(nextMove, true);
         } else if (activeInspectType === 'switch') {
           var validSlots = getValidSwitchSlots();
           var curIdx = validSlots.indexOf(activeInspectIndex);
@@ -510,16 +565,16 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
           var nextIdx = curIdx + (isRight ? 1 : -1);
           if (nextIdx >= validSlots.length) nextIdx = 0;
           if (nextIdx < 0) nextIdx = validSlots.length - 1;
-          inspectPokemon(validSlots[nextIdx]);
+          inspectPokemon(validSlots[nextIdx], true);
         }
       } else if (isUp || isDown) {
         if (activeInspectType === 'move') {
           var switchSlots = getValidSwitchSlots();
-          inspectPokemon(switchSlots[0] || 1);
+          inspectPokemon(switchSlots[0] || 1, true);
         } else if (activeInspectType === 'switch') {
-          inspectOpponent();
+          inspectOpponent(true);
         } else if (activeInspectType === 'opponent') {
-          inspectMove(1);
+          inspectMove(1, true);
         }
       }
       e.preventDefault();
@@ -533,69 +588,70 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
     // --- CALL / ENTER -> EXECUTE ACTION ---
     if (isCall || isEnter) {
-      if (activeInspectType === 'move') {
-        var moveBtn = document.querySelector('button[name="chooseMove"][value="' + activeInspectIndex + '"]') ||
-                      document.querySelectorAll('button[name="chooseMove"]')[activeInspectIndex - 1];
-        if (moveBtn) moveBtn.click();
-        hideInspector();
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        return;
-      } else if (activeInspectType === 'switch') {
-        var req = getBattleRequest();
-        var mon = req && req.side && req.side.pokemon && req.side.pokemon[activeInspectIndex - 1];
+      if (isPinned && activeInspectType) {
+        if (activeInspectType === 'move') {
+          var moveBtn = document.querySelector('button[name="chooseMove"][value="' + activeInspectIndex + '"]') ||
+                        document.querySelectorAll('button[name="chooseMove"]')[activeInspectIndex - 1];
+          if (moveBtn) moveBtn.click();
+          hideInspector();
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          return;
+        } else if (activeInspectType === 'switch') {
+          var req = getBattleRequest();
+          var mon = req && req.side && req.side.pokemon && req.side.pokemon[activeInspectIndex - 1];
 
-        // Guard against fainted pokemon switch attempts
-        if (mon && mon.condition && mon.condition.includes('fnt')) {
+          if (mon && mon.condition && mon.condition.includes('fnt')) {
+            hideInspector();
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            return;
+          }
+
+          var monSpecies = mon ? mon.details.split(',')[0].trim().toLowerCase() : '';
+          var switchBtns = document.querySelectorAll('button[name="chooseSwitch"], button.switchselect');
+          var targetBtn = null;
+
+          for (var s = 0; s < switchBtns.length; s++) {
+            var btnText = switchBtns[s].innerText.toLowerCase();
+            if (monSpecies && btnText.includes(monSpecies)) {
+              targetBtn = switchBtns[s];
+              break;
+            }
+          }
+
+          if (!targetBtn) {
+            for (var s = 0; s < switchBtns.length; s++) {
+              var btnVal = parseInt(switchBtns[s].value, 10);
+              if (btnVal === activeInspectIndex || btnVal === (activeInspectIndex - 1)) {
+                targetBtn = switchBtns[s];
+                break;
+              }
+            }
+          }
+
+          if (targetBtn) {
+            targetBtn.click();
+          } else {
+            var room = getBattleRoom();
+            if (room && typeof room.choose === 'function') {
+              room.choose('switch', activeInspectIndex);
+            } else if (room && typeof room.send === 'function') {
+              room.send('/choose switch ' + activeInspectIndex);
+            }
+          }
+
           hideInspector();
           e.preventDefault();
           e.stopImmediatePropagation();
           return;
         }
-
-        var monSpecies = mon ? mon.details.split(',')[0].trim().toLowerCase() : '';
-        var switchBtns = document.querySelectorAll('button[name="chooseSwitch"], button.switchselect');
-        var targetBtn = null;
-
-        for (var s = 0; s < switchBtns.length; s++) {
-          var btnText = switchBtns[s].innerText.toLowerCase();
-          if (monSpecies && btnText.includes(monSpecies)) {
-            targetBtn = switchBtns[s];
-            break;
-          }
-        }
-
-        if (!targetBtn) {
-          for (var s = 0; s < switchBtns.length; s++) {
-            var btnVal = parseInt(switchBtns[s].value, 10);
-            if (btnVal === activeInspectIndex || btnVal === (activeInspectIndex - 1)) {
-              targetBtn = switchBtns[s];
-              break;
-            }
-          }
-        }
-
-        if (targetBtn) {
-          targetBtn.click();
-        } else {
-          var room = getBattleRoom();
-          if (room && typeof room.choose === 'function') {
-            room.choose('switch', activeInspectIndex);
-          } else if (room && typeof room.send === 'function') {
-            room.send('/choose switch ' + activeInspectIndex);
-          }
-        }
-
-        hideInspector();
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        return;
       }
     }
 
     // --- # / ESCAPE -> CLOSE INSPECTOR OR UNDO ---
     if (isHashOrEscape) {
-      if (activeInspectType) {
+      if (activeInspectType || isPinned) {
         hideInspector();
         e.preventDefault();
         e.stopImmediatePropagation();
@@ -614,19 +670,19 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       return;
     }
 
-    // --- 0 -> UNIFIED MODAL TOGGLE ---
+    // --- 0 -> UNIFIED PINNED MODAL TOGGLE ---
     if (key === '0' || code === 48) {
-      if (activeInspectType) {
+      if (isPinned) {
         hideInspector();
       } else {
         var focused = document.activeElement;
         if (focused && focused.name === 'chooseMove') {
-          inspectMove(focused.value || '1');
+          inspectMove(focused.value || '1', true);
         } else if (focused && (focused.name === 'chooseSwitch' || focused.classList.contains('switchselect'))) {
           var validSlots = getValidSwitchSlots();
-          inspectPokemon(validSlots[0] || 1);
+          inspectPokemon(validSlots[0] || 1, true);
         } else {
-          inspectMove('1');
+          inspectMove('1', true);
         }
       }
       e.preventDefault();
@@ -636,10 +692,10 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
     // --- 1 -> OPPONENT INSPECTOR ---
     if (key === '1' || code === 49) {
-      if (activeInspectType === 'opponent') {
+      if (isPinned && activeInspectType === 'opponent') {
         hideInspector();
       } else {
-        inspectOpponent();
+        inspectOpponent(true);
       }
       e.preventDefault();
       e.stopImmediatePropagation();
@@ -667,7 +723,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
   }, true);
 
   // Extract Move Details, Active Pokémon Type & Speed
-  function inspectMove(index) {
+  function inspectMove(index, pinned) {
     index = Number(index) || 1;
     var moveBtn = document.querySelector('button[name="chooseMove"][value="' + index + '"]') ||
                   document.querySelectorAll('button[name="chooseMove"]')[index - 1];
@@ -716,11 +772,11 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       html += '<div style="color:#ff5555;font-weight:bold;margin-top:2px;">[DISABLED]</div>';
     }
 
-    showInspector('⚡ Move ' + index + '/4: ' + moveName, html, 'move', index);
+    showInspector('⚡ Move ' + index + '/4: ' + moveName, html, 'move', index, pinned);
   }
 
-  // Extract Switch Slot Details (Omits dead Pokémon from normal cycle)
-  function inspectPokemon(slot) {
+  // Extract Switch Slot Details
+  function inspectPokemon(slot, pinned) {
     slot = Number(slot) || 1;
     var req = getBattleRequest();
     var mon = req && req.side && req.side.pokemon && req.side.pokemon[slot - 1];
@@ -768,16 +824,16 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       html = '<div>No data available for Slot ' + slot + '</div>';
     }
 
-    showInspector('🔄 Switch Slot ' + slot + '/6: ' + rawDetails, html, 'switch', slot);
+    showInspector('🔄 Switch Slot ' + slot + '/6: ' + rawDetails, html, 'switch', slot, pinned);
   }
 
-  // Extract Opponent Profile, Item, Ability, Tera, and Speed Calculation
-  function inspectOpponent() {
+  // Extract Opponent Profile
+  function inspectOpponent(pinned) {
     var foe = getOpponentActive();
     var foeTypes = getOpponentTypes();
 
     if (!foe) {
-      showInspector('🎯 Opponent', '<div>No active opponent data found in battle state.</div>', 'opponent', 1);
+      showInspector('🎯 Opponent', '<div>No active opponent data found in battle state.</div>', 'opponent', 1, pinned);
       return;
     }
 
@@ -850,38 +906,23 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     if (resist.length) html += '<div style="margin:1px 0;"><span style="color:#ef9a9a;font-weight:bold;">Resist:</span> ' + resist.join(', ') + '</div>';
     if (immune.length) html += '<div style="margin:1px 0;"><span style="color:#9e9e9e;font-weight:bold;">Immune:</span> ' + immune.join(', ') + '</div>';
 
-    showInspector('🎯 Opponent: ' + cleanName, html, 'opponent', 1);
+    showInspector('🎯 Opponent: ' + cleanName, html, 'opponent', 1, pinned);
   }
 
-  // 3. Automated DOM Sweeper & Comprehensive Tooltip Override
+  // 3. Automated DOM Sweeper
   function patchShowdown() {
     var chatElements = document.querySelectorAll('button[name="openChat"], button[name="openBattleLog"], button.battle-chat-toggle, .battle-chat-toggle, .chat-toggle');
     for (var i = 0; i < chatElements.length; i++) {
       chatElements[i].remove();
     }
 
-    var tooltips = document.querySelectorAll('#tooltipwrapper, .tooltip, .tooltipwrapper, div[class*="tooltip"]');
-    for (var j = 0; j < tooltips.length; j++) {
-      tooltips[j].style.setProperty('display', 'none', 'important');
-    }
-
-    if (window.BattleTooltips) {
-      BattleTooltips.prototype.showTooltip = function() {};
-      BattleTooltips.prototype.showMoveTooltip = function() {};
-      BattleTooltips.prototype.showPokemonTooltip = function() {};
-      BattleTooltips.prototype.showCustomTooltip = function() {};
-      BattleTooltips.prototype.showPinnedTooltip = function() {};
-      BattleTooltips.prototype.hideTooltip = function() {};
-    }
     if (window.app) {
-      app.showTooltip = function() {};
-      app.hideTooltip = function() {};
       app.focusPrevRoom = function() {};
       app.focusNextRoom = function() {};
     }
   }
 
-  setInterval(patchShowdown, 200);
+  setInterval(patchShowdown, 250);
 
   // 4. Auto-Connect Polling Loop
   function attemptConnect() {
