@@ -149,7 +149,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     window.localStorage.setItem('showdown_crossteams', 'false');
   } catch (e) {}
 
-  var activeInspectType = null; // 'move' | 'switch' | 'opponent'
+  var activeInspectType = null; // 'move' | 'switch' | 'opponent' | 'myteam'
   var activeInspectIndex = 1;
   var chatSyncTimer = null;
 
@@ -191,6 +191,39 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     if (mult >= 2) return '<span class="eff-badge eff-super">Super Eff (' + mult + '×)</span>';
     if (mult <= 0.5) return '<span class="eff-badge eff-resist">Not Eff (' + mult + '×)</span>';
     return '<span class="eff-badge eff-neutral">Neutral (1×)</span>';
+  }
+
+  // --- /DT DESCRIPTION RESOLVERS ---
+  function getItemDesc(itemName) {
+    if (!itemName) return '';
+    var clean = itemName.replace(/\\s*\\(Lost\\)$/i, '');
+    var id = clean.toLowerCase().replace(/[^a-z0-9]/g, '');
+    var data = (window.BattleItems && BattleItems[id]) || (window.Dex && Dex.items ? Dex.items.get(clean) : null);
+    return (data && (data.shortDesc || data.desc)) ? (data.shortDesc || data.desc) : '';
+  }
+
+  function getAbilityDesc(abilityName) {
+    if (!abilityName) return '';
+    var clean = abilityName.replace(/\\s*\\(Possible\\)$/i, '');
+    var id = clean.toLowerCase().replace(/[^a-z0-9]/g, '');
+    var data = (window.BattleAbilities && BattleAbilities[id]) || (window.Dex && Dex.abilities ? Dex.abilities.get(clean) : null);
+    return (data && (data.shortDesc || data.desc)) ? (data.shortDesc || data.desc) : '';
+  }
+
+  function renderDefensiveProfile(types) {
+    var weak = [], resist = [], immune = [];
+    for (var i = 0; i < TYPE_LIST.length; i++) {
+      var atkT = TYPE_LIST[i];
+      var m = getEffectiveness(atkT, types);
+      if (m === 0) immune.push(atkT);
+      else if (m > 1) weak.push(atkT + ' (' + m + '×)');
+      else if (m < 1) resist.push(atkT + ' (' + m + '×)');
+    }
+    var html = '<div style="margin-top:3px;border-top:1px solid #333;padding-top:2px;"><b>Defensive Profile:</b></div>';
+    if (weak.length) html += '<div style="margin:1px 0;"><span style="color:#a5d6a7;font-weight:bold;">Weak:</span> ' + weak.join(', ') + '</div>';
+    if (resist.length) html += '<div style="margin:1px 0;"><span style="color:#ef9a9a;font-weight:bold;">Resist:</span> ' + resist.join(', ') + '</div>';
+    if (immune.length) html += '<div style="margin:1px 0;"><span style="color:#9e9e9e;font-weight:bold;">Immune:</span> ' + immune.join(', ') + '</div>';
+    return html;
   }
 
   // --- CENTERED FULL-VIEW INSPECTOR MODAL ---
@@ -297,8 +330,11 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     if (!msg) return;
 
     var room = getBattleRoom();
-    if (room && typeof room.send === 'function') room.send(msg);
-    else if (window.app && typeof app.send === 'function') app.send(msg);
+    if (room && typeof room.send === 'function') {
+      room.send(msg);
+    } else if (window.app && typeof app.send === 'function') {
+      app.send(msg);
+    }
 
     input.value = '';
     setTimeout(syncChatContent, 100);
@@ -390,8 +426,34 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     return null;
   }
 
-  function getOpponentTypes() {
-    var foe = getOpponentActive();
+  function getFoeTeam() {
+    var room = getBattleRoom();
+    if (!room || !room.battle) return [];
+    var b = room.battle;
+    var foeSide = b.farSide || (b.sides && (b.mySide && b.mySide.n === 0 ? b.sides[1] : b.sides[0])) || b.foe;
+    if (foeSide && foeSide.pokemon && foeSide.pokemon.length) {
+      return foeSide.pokemon;
+    }
+    var active = getOpponentActive();
+    return active ? [active] : [];
+  }
+
+  function getMyTeam() {
+    var req = getBattleRequest();
+    if (req && req.side && req.side.pokemon && req.side.pokemon.length) {
+      return req.side.pokemon;
+    }
+    var room = getBattleRoom();
+    if (room && room.battle) {
+      var b = room.battle;
+      var mySide = b.yourSide || (b.sides && (b.mySide && b.mySide.n !== undefined ? b.sides[b.mySide.n] : b.sides[0])) || b.mySide;
+      if (mySide && mySide.pokemon) return mySide.pokemon;
+    }
+    return [];
+  }
+
+  function getOpponentTypes(customFoe) {
+    var foe = customFoe || getOpponentActive();
     if (!foe) return [];
 
     if (foe.terastallized && typeof foe.terastallized === 'string' && foe.terastallized !== 'Stellar') {
@@ -404,7 +466,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     if (foe.types && foe.types.length) return foe.types;
     if (foe.speciesData && foe.speciesData.types) return foe.speciesData.types;
 
-    var raw = (foe.species || foe.name || '').replace(/^p[12]:\s*/i, '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    var raw = (foe.species || foe.name || '').replace(/^p[12]:\\s*/i, '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
     if (window.BattlePokedex && BattlePokedex[raw] && BattlePokedex[raw].types) {
       return BattlePokedex[raw].types;
     }
@@ -498,8 +560,8 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
     if (activeInspectType && (isLeft || isRight || isUp || isDown)) {
       if (isLeft || isRight) {
+        var delta = isRight ? 1 : -1;
         if (activeInspectType === 'move') {
-          var delta = isRight ? 1 : -1;
           var nextMove = activeInspectIndex + delta;
           if (nextMove > 4) nextMove = 1;
           if (nextMove < 1) nextMove = 4;
@@ -508,18 +570,29 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
           var validSlots = getValidSwitchSlots();
           var curIdx = validSlots.indexOf(activeInspectIndex);
           if (curIdx === -1) curIdx = 0;
-          var nextIdx = curIdx + (isRight ? 1 : -1);
+          var nextIdx = curIdx + delta;
           if (nextIdx >= validSlots.length) nextIdx = 0;
           if (nextIdx < 0) nextIdx = validSlots.length - 1;
           inspectPokemon(validSlots[nextIdx]);
+        } else if (activeInspectType === 'opponent') {
+          var foeTeam = getFoeTeam();
+          var nextFoe = activeInspectIndex + delta;
+          if (nextFoe > foeTeam.length) nextFoe = 1;
+          if (nextFoe < 1) nextFoe = foeTeam.length;
+          inspectOpponent(nextFoe);
+        } else if (activeInspectType === 'myteam') {
+          var myTeam = getMyTeam();
+          var nextMon = activeInspectIndex + delta;
+          if (nextMon > myTeam.length) nextMon = 1;
+          if (nextMon < 1) nextMon = myTeam.length;
+          inspectMyTeam(nextMon);
         }
       } else if (isUp || isDown) {
+        // Up/Down isolated strictly to 0 menu (Move <-> Switch)
         if (activeInspectType === 'move') {
           var switchSlots = getValidSwitchSlots();
           inspectPokemon(switchSlots[0] || 1);
         } else if (activeInspectType === 'switch') {
-          inspectOpponent();
-        } else if (activeInspectType === 'opponent') {
           inspectMove(1);
         }
       }
@@ -614,9 +687,9 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       return;
     }
 
-    // --- 0 -> UNIFIED MODAL TOGGLE ---
+    // --- 0 -> UNIFIED MODAL TOGGLE (MOVES / SWITCHES ONLY) ---
     if (key === '0' || code === 48) {
-      if (activeInspectType) {
+      if (activeInspectType === 'move' || activeInspectType === 'switch') {
         hideInspector();
       } else {
         var focused = document.activeElement;
@@ -634,12 +707,24 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       return;
     }
 
-    // --- 1 -> OPPONENT INSPECTOR ---
+    // --- 1 -> OPPONENT PROFILE & WEAKNESS INSPECTOR ---
     if (key === '1' || code === 49) {
       if (activeInspectType === 'opponent') {
         hideInspector();
       } else {
-        inspectOpponent();
+        inspectOpponent(1);
+      }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
+
+    // --- 2 -> MY TEAM DEFENSIVE PROFILE & /DT INSPECTOR ---
+    if (key === '2' || code === 50 || eventCode === 'Digit2' || eventCode === 'Numpad2') {
+      if (activeInspectType === 'myteam') {
+        hideInspector();
+      } else {
+        inspectMyTeam(1);
       }
       e.preventDefault();
       e.stopImmediatePropagation();
@@ -682,7 +767,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
     var foeTypes = getOpponentTypes();
     var foe = getOpponentActive();
-    var foeName = foe ? (foe.name || foe.species || 'Opponent').replace(/^p[12]:\s*/i, '') : 'Opponent';
+    var foeName = foe ? (foe.name || foe.species || 'Opponent').replace(/^p[12]:\\s*/i, '') : 'Opponent';
 
     var moveName = (dexData && dexData.name) || (reqMove && reqMove.move) || rawName;
     var type = (dexData && dexData.type) || 'Normal';
@@ -727,7 +812,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
     var foeTypes = getOpponentTypes();
     var foe = getOpponentActive();
-    var foeName = foe ? (foe.name || foe.species || 'Opponent').replace(/^p[12]:\s*/i, '') : 'Opponent';
+    var foeName = foe ? (foe.name || foe.species || 'Opponent').replace(/^p[12]:\\s*/i, '') : 'Opponent';
 
     var rawDetails = mon ? mon.details.split(',')[0] : ('Slot ' + slot);
     var speciesKey = rawDetails.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
@@ -771,17 +856,22 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     showInspector('🔄 Switch Slot ' + slot + '/6: ' + rawDetails, html, 'switch', slot);
   }
 
-  // Extract Opponent Profile & Revealed Moves
-  function inspectOpponent() {
-    var foe = getOpponentActive();
-    var foeTypes = getOpponentTypes();
-
-    if (!foe) {
-      showInspector('🎯 Opponent', '<div>No active opponent data found in battle state.</div>', 'opponent', 1);
+  // Extract Cyclable Opponent Profile, Weaknesses, Speed & /dt Explanations (Key 1)
+  function inspectOpponent(index) {
+    index = Number(index) || 1;
+    var foeTeam = getFoeTeam();
+    if (!foeTeam.length) {
+      showInspector('🎯 Opponent Team', '<div>No opponent team data found.</div>', 'opponent', 1);
       return;
     }
 
-    var cleanName = (foe.name || foe.species || 'Unknown').replace(/^p[12]:\s*/i, '');
+    if (index > foeTeam.length) index = 1;
+    if (index < 1) index = foeTeam.length;
+
+    var foe = foeTeam[index - 1];
+    var foeTypes = getOpponentTypes(foe);
+
+    var cleanName = (foe.name || foe.species || 'Unknown').replace(/^p[12]:\\s*/i, '');
     var speciesKey = cleanName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
     var pDex = (window.BattlePokedex && BattlePokedex[speciesKey]) || (window.Dex && Dex.species ? Dex.species.get(speciesKey) : {});
     var baseSpe = (pDex.baseStats && pDex.baseStats.spe) || (pDex.spe) || 0;
@@ -790,7 +880,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     if (foe.level) {
       level = Number(foe.level);
     } else if (foe.details) {
-      var lvlMatch = foe.details.match(/L(\d+)/);
+      var lvlMatch = foe.details.match(/L(\\d+)/);
       if (lvlMatch) level = parseInt(lvlMatch[1], 10);
     }
 
@@ -812,36 +902,30 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       speedText = minNeutral + ' - ' + maxMax + boostLabel + ' <span style="color:#888;font-size:8.5px;">(Min ' + minMin + ', Base ' + baseSpe + ')</span>';
     }
 
-    var itemText = foe.item || (foe.prevItem ? (foe.prevItem + ' (Lost)') : 'Unrevealed / None');
+    var rawItem = foe.item || (foe.prevItem ? (foe.prevItem + ' (Lost)') : '');
+    var itemDesc = getItemDesc(rawItem);
+    var itemText = rawItem || 'Unrevealed / None';
 
-    var abilityText = foe.ability || '';
-    if (!abilityText && pDex && pDex.abilities) {
+    var rawAbility = foe.ability || '';
+    if (!rawAbility && pDex && pDex.abilities) {
       var abList = [];
-      for (var k in pDex.abilities) {
-        abList.push(pDex.abilities[k]);
-      }
-      abilityText = abList.join(', ') + ' <span style="color:#888;font-size:8.5px;">(Possible)</span>';
+      for (var k in pDex.abilities) abList.push(pDex.abilities[k]);
+      rawAbility = abList.join(', ') + ' (Possible)';
     }
-    if (!abilityText) abilityText = 'Unknown';
-
-    var weak = [], resist = [], immune = [];
-    for (var i = 0; i < TYPE_LIST.length; i++) {
-      var atkT = TYPE_LIST[i];
-      var m = getEffectiveness(atkT, foeTypes);
-      if (m === 0) immune.push(atkT);
-      else if (m > 1) weak.push(atkT + ' (' + m + '×)');
-      else if (m < 1) resist.push(atkT + ' (' + m + '×)');
-    }
+    var abilityDesc = getAbilityDesc(rawAbility.split(',')[0]);
+    var abilityText = rawAbility || 'Unknown';
 
     var teraLabel = foe.terastallized ? ' <span style="color:#00ffcc;font-weight:bold;">[Tera: ' + (foe.teraType || foe.terastallized) + ']</span>' : '';
+    var statusLabel = (foe.condition && foe.condition.includes('fnt')) ? ' <span style="color:#ff5555;font-weight:bold;">[FNT]</span>' : (foe.active ? ' <span style="color:#00ffcc;font-weight:bold;">[ACTIVE]</span>' : '');
 
     var html = '';
-    html += '<div><b>Types:</b> ' + (foeTypes.join(' / ') || 'Unknown') + teraLabel + '</div>';
+    html += '<div><b>Types:</b> ' + (foeTypes.join(' / ') || 'Unknown') + teraLabel + statusLabel + '</div>';
     html += '<div><b>Speed (Lv ' + level + '):</b> ' + speedText + '</div>';
-    html += '<div><b>Item:</b> ' + itemText + '</div>';
+    html += '<div style="margin-top:2px;"><b>Item:</b> ' + itemText + '</div>';
+    if (itemDesc) html += '<div style="color:#aaa;font-size:8.5px;margin-bottom:2px;">↳ ' + itemDesc + '</div>';
     html += '<div><b>Ability:</b> ' + abilityText + '</div>';
+    if (abilityDesc) html += '<div style="color:#aaa;font-size:8.5px;margin-bottom:2px;">↳ ' + abilityDesc + '</div>';
 
-    // Formatted Revealed Moves Section
     if (foe.moves && foe.moves.length) {
       html += '<div style="margin-top:3px;border-top:1px solid #333;padding-top:2px;"><b>Revealed Moves:</b></div>';
       for (var m = 0; m < foe.moves.length; m++) {
@@ -854,19 +938,56 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
         var mBp = (mData && mData.basePower) ? mData.basePower : '—';
         html += '<div style="font-size:9px;margin:1px 0;">• ' + mName + ' <span style="color:#ffd700;">[' + mType + ' ' + mCat + ']</span> (BP: ' + mBp + ')</div>';
       }
-    } else {
-      html += '<div style="margin-top:3px;color:#888;font-size:9px;"><b>Revealed Moves:</b> None yet</div>';
     }
 
-    html += '<div style="margin-top:3px;border-top:1px solid #333;padding-top:2px;"><b>Defensive Profile:</b></div>';
-    if (weak.length) html += '<div style="margin:1px 0;"><span style="color:#a5d6a7;font-weight:bold;">Weak:</span> ' + weak.join(', ') + '</div>';
-    if (resist.length) html += '<div style="margin:1px 0;"><span style="color:#ef9a9a;font-weight:bold;">Resist:</span> ' + resist.join(', ') + '</div>';
-    if (immune.length) html += '<div style="margin:1px 0;"><span style="color:#9e9e9e;font-weight:bold;">Immune:</span> ' + immune.join(', ') + '</div>';
+    html += renderDefensiveProfile(foeTypes);
 
-    showInspector('🎯 Opponent: ' + cleanName, html, 'opponent', 1);
+    showInspector('🎯 Opponent ' + index + '/' + foeTeam.length + ': ' + cleanName, html, 'opponent', index);
   }
 
-  // 3. Automated DOM Sweeper & Tooltip Neutralization
+  // Extract Cyclable My Team Profile, Weaknesses, Speed & /dt Explanations (Key 2)
+  function inspectMyTeam(index) {
+    index = Number(index) || 1;
+    var myTeam = getMyTeam();
+    if (!myTeam.length) {
+      showInspector('🛡️ My Team Profile', '<div>No team data found.</div>', 'myteam', 1);
+      return;
+    }
+
+    if (index > myTeam.length) index = 1;
+    if (index < 1) index = myTeam.length;
+
+    var mon = myTeam[index - 1];
+    var rawName = mon ? (mon.details ? mon.details.split(',')[0] : (mon.name || mon.species || ('Slot ' + index))) : ('Slot ' + index);
+    var speciesKey = rawName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    var pDex = (window.BattlePokedex && BattlePokedex[speciesKey]) || (window.Dex && Dex.species ? Dex.species.get(speciesKey) : {});
+
+    var monTypes = (mon && mon.types) || (pDex && pDex.types) || [];
+    if (mon && mon.teraType) {
+      monTypes = (mon.terastallized && mon.terastallized !== 'Stellar') ? [mon.terastallized] : monTypes;
+    }
+
+    var monSpeed = (mon && mon.stats && mon.stats.spe) ? mon.stats.spe : ((pDex && pDex.baseStats && pDex.baseStats.spe) ? (pDex.baseStats.spe + ' (Base)') : '—');
+    var itemDesc = getItemDesc(mon ? mon.item : '');
+    var abilityDesc = getAbilityDesc(mon ? mon.ability : '');
+
+    var isDead = mon && mon.condition && mon.condition.includes('fnt');
+    var statusBadge = isDead ? ' <span style="color:#ff5555;font-weight:bold;">[FNT]</span>' : (mon && mon.active ? ' <span style="color:#00ffcc;font-weight:bold;">[ACTIVE]</span>' : '');
+
+    var html = '';
+    html += '<div><b>Types:</b> ' + (monTypes.join(' / ') || 'Unknown') + (mon && mon.teraType ? ' [Tera: ' + mon.teraType + ']' : '') + statusBadge + '</div>';
+    html += '<div><b>Speed:</b> <span style="color:#00ffcc;font-weight:bold;">' + monSpeed + '</span> &nbsp;|&nbsp; <b>HP:</b> ' + (mon ? (mon.condition || '—') : '—') + '</div>';
+    html += '<div style="margin-top:2px;"><b>Item:</b> ' + (mon && mon.item ? mon.item : 'None') + '</div>';
+    if (itemDesc) html += '<div style="color:#aaa;font-size:8.5px;margin-bottom:2px;">↳ ' + itemDesc + '</div>';
+    html += '<div><b>Ability:</b> ' + (mon && mon.ability ? mon.ability : 'Unknown') + '</div>';
+    if (abilityDesc) html += '<div style="color:#aaa;font-size:8.5px;margin-bottom:2px;">↳ ' + abilityDesc + '</div>';
+
+    html += renderDefensiveProfile(monTypes);
+
+    showInspector('🛡️ My Team ' + index + '/' + myTeam.length + ': ' + rawName, html, 'myteam', index);
+  }
+
+  // 3. Automated DOM Sweeper
   function patchShowdown() {
     var chatElements = document.querySelectorAll('button[name="openChat"], button[name="openBattleLog"], button.battle-chat-toggle, .battle-chat-toggle, .chat-toggle');
     for (var i = 0; i < chatElements.length; i++) {
@@ -886,6 +1007,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       BattleTooltips.prototype.showPinnedTooltip = function() {};
       BattleTooltips.prototype.hideTooltip = function() {};
     }
+
     if (window.app) {
       app.showTooltip = function() {};
       app.hideTooltip = function() {};
