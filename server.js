@@ -61,42 +61,22 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
       const injectedHead = `
 <style>
-  /* 1. Compact Native Hover Tooltips (Positioned at Top, Scaled for 240x320) */
-  #tooltipwrapper {
-    position: fixed !important;
-    top: 30px !important;
-    left: 50% !important;
-    transform: translateX(-50%) !important;
-    width: 220px !important;
-    max-width: 92vw !important;
-    max-height: 110px !important;
-    overflow-y: auto !important;
-    background: rgba(14, 18, 26, 0.96) !important;
-    border: 1.5px solid #ffd700 !important;
-    border-radius: 4px !important;
-    font-size: 9px !important;
-    line-height: 1.2 !important;
-    z-index: 2147483640 !important;
-    box-shadow: 0 0 10px rgba(0,0,0,0.9) !important;
+  /* 1. Complete Suppression of Native Showdown Hover Tooltips */
+  #tooltipwrapper,
+  .tooltip,
+  .tooltipwrapper,
+  .tooltip-inner,
+  div[class*="tooltip"],
+  .battle-log-tag {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
     pointer-events: none !important;
-    box-sizing: border-box !important;
-  }
-  #tooltipwrapper .tooltip {
-    display: block !important;
-    visibility: visible !important;
-    opacity: 1 !important;
-    font-size: 9px !important;
-    padding: 3px 5px !important;
-    color: #e0e0e0 !important;
-  }
-  #tooltipwrapper .tooltip h2 {
-    font-size: 10px !important;
-    margin: 0 0 2px 0 !important;
-    color: #ffd700 !important;
-  }
-  #tooltipwrapper .tooltip p {
-    margin: 1px 0 !important;
-    font-size: 8.5px !important;
+    position: absolute !important;
+    top: -9999px !important;
+    left: -9999px !important;
+    width: 0 !important;
+    height: 0 !important;
   }
 
   /* 2. Obliterate on-screen mobile chat buttons */
@@ -886,20 +866,35 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     showInspector('🎯 Opponent: ' + cleanName, html, 'opponent', 1);
   }
 
-  // 3. Automated DOM Sweeper
+  // 3. Automated DOM Sweeper & Tooltip Neutralization
   function patchShowdown() {
     var chatElements = document.querySelectorAll('button[name="openChat"], button[name="openBattleLog"], button.battle-chat-toggle, .battle-chat-toggle, .chat-toggle');
     for (var i = 0; i < chatElements.length; i++) {
       chatElements[i].remove();
     }
 
+    var tooltips = document.querySelectorAll('#tooltipwrapper, .tooltip, .tooltipwrapper, div[class*="tooltip"]');
+    for (var j = 0; j < tooltips.length; j++) {
+      tooltips[j].style.setProperty('display', 'none', 'important');
+    }
+
+    if (window.BattleTooltips) {
+      BattleTooltips.prototype.showTooltip = function() {};
+      BattleTooltips.prototype.showMoveTooltip = function() {};
+      BattleTooltips.prototype.showPokemonTooltip = function() {};
+      BattleTooltips.prototype.showCustomTooltip = function() {};
+      BattleTooltips.prototype.showPinnedTooltip = function() {};
+      BattleTooltips.prototype.hideTooltip = function() {};
+    }
     if (window.app) {
+      app.showTooltip = function() {};
+      app.hideTooltip = function() {};
       app.focusPrevRoom = function() {};
       app.focusNextRoom = function() {};
     }
   }
 
-  setInterval(patchShowdown, 250);
+  setInterval(patchShowdown, 200);
 
   // 4. Auto-Connect Polling Loop
   function attemptConnect() {
