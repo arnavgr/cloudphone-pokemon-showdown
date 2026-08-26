@@ -96,8 +96,6 @@ npm start
    * **Build Command:** `npm install`
    * **Start Command:** `npm start`
 
-4. *(Optional)* Add the `PROXY_URL` environment variable if you are using an upstream residential proxy for simulator traffic.
-
 ---
 
 ## Environment Variables
@@ -105,7 +103,6 @@ npm start
 | **Variable** | **Description**                                                        | **Default** |
 | ------------ | ---------------------------------------------------------------------- | ----------- |
 | `PORT`       | Port for the Express server to listen on.                              | `3000`      |
-| `PROXY_URL`  | Optional upstream HTTP/HTTPS proxy URL (`http://user:pass@host:port`). | `undefined` |
 
 ## License
 
