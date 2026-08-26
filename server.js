@@ -267,8 +267,10 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     if (!el) {
       el = document.createElement('div');
       el.id = 'cp-inspector';
-      el.style.cssText = 'position:fixed!important;top:50%!important;left:50%!important;transform:translate(-50%,-50%)!important;width:224px!important;max-height:265px!important;background:#0e121a!important;border:2px solid #ffd700!important;border-radius:6px!important;color:#fff!important;padding:6px 8px!important;z-index:2147483647!important;font-family:sans-serif!important;font-size:10px!important;line-height:1.3!important;box-shadow:0 0 20px rgba(0,0,0,0.95)!important;box-sizing:border-box!important;display:none;overflow-y:auto!important;';
-      el.innerHTML = '<div id="cp-insp-title" style="font-size:11px;font-weight:bold;color:#ffd700;margin-bottom:3px;border-bottom:1px solid #333;padding-bottom:2px;"></div><div id="cp-insp-body" style="color:#e0e0e0;margin-bottom:5px;max-height:200px;overflow-y:auto;"></div><div id="cp-insp-footer" style="font-size:9px;color:#00ffcc;font-weight:bold;text-align:center;border-top:1px solid #333;padding-top:3px;">[CALL/OK] Use | [D-Pad] Cycle | [#] Close</div>';
+      el.style.cssText = 'position:fixed!important;top:50%!important;left:50%!important;transform:translate(-50%,-50%)!important;width:226px!important;max-height:270px!important;background:#0e121a!important;border:2px solid #ffd700!important;border-radius:6px!important;color:#fff!important;padding:5px 6px!important;z-index:2147483647!important;font-family:sans-serif!important;font-size:9.5px!important;line-height:1.25!important;box-shadow:0 0 20px rgba(0,0,0,0.95)!important;box-sizing:border-box!important;display:none;flex-direction:column!important;';
+      el.innerHTML = '<div id="cp-insp-title" style="font-size:10.5px;font-weight:bold;color:#ffd700;margin-bottom:2px;border-bottom:1px solid #333;padding-bottom:2px;"></div>' +
+                     '<div id="cp-insp-body" style="color:#e0e0e0;flex:1!important;max-height:205px!important;overflow-y:auto!important;margin-bottom:3px;padding-right:2px;word-break:break-word;"></div>' +
+                     '<div id="cp-insp-footer" style="font-size:8.5px;color:#00ffcc;font-weight:bold;text-align:center;border-top:1px solid #333;padding-top:2px;"></div>';
       document.body.appendChild(el);
     }
     return el;
@@ -285,11 +287,24 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     var el = getInspectorEl();
     var titleEl = document.getElementById('cp-insp-title');
     var bodyEl = document.getElementById('cp-insp-body');
+    var footEl = document.getElementById('cp-insp-footer');
 
     if (titleEl) titleEl.innerHTML = title;
-    if (bodyEl) bodyEl.innerHTML = bodyHtml;
+    if (bodyEl) {
+      bodyEl.innerHTML = bodyHtml;
+      bodyEl.scrollTop = 0;
+    }
+    if (footEl) {
+      if (type === 'move' || type === 'switch') {
+        footEl.innerHTML = '[CALL] Use | [◄►] Cycle | [▲▼] Move ↔ Switch | [#] Close';
+      } else if (type === 'opponent') {
+        footEl.innerHTML = '[◄►] Cycle Foe | [▲▼] Scroll | [#] Close';
+      } else if (type === 'myteam') {
+        footEl.innerHTML = '[◄►] Cycle Team | [▲▼] Scroll | [#] Close';
+      }
+    }
 
-    el.style.setProperty('display', 'block', 'important');
+    el.style.setProperty('display', 'flex', 'important');
     activeInspectType = type;
     activeInspectIndex = Number(index) || 1;
   }
@@ -348,7 +363,9 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       var isNearBottom = (contentEl.scrollHeight - contentEl.scrollTop - contentEl.clientHeight) < 45;
       if (contentEl.innerHTML !== sourceEl.innerHTML) {
         contentEl.innerHTML = sourceEl.innerHTML;
-        if (isNearBottom) contentEl.scrollTop = contentEl.scrollHeight;
+        if (isNearBottom) {
+          contentEl.scrollTop = contentEl.scrollHeight;
+        }
       }
     } else if (contentEl.children.length === 0) {
       contentEl.innerHTML = '<div style="color:#777;padding:10px 0;text-align:center;">No log or messages yet.</div>';
@@ -565,6 +582,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     var isUp = (key === 'ArrowUp' || code === 38);
     var isDown = (key === 'ArrowDown' || code === 40);
 
+    // --- CHAT MODAL INTERACTION ---
     if (isChatModalOpen()) {
       var chatInput = document.getElementById('cp-chat-input');
       var contentEl = document.getElementById('cp-chat-content');
@@ -617,6 +635,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     var isLeft = (key === 'ArrowLeft' || code === 37);
     var isRight = (key === 'ArrowRight' || code === 39);
 
+    // --- INSPECTOR DPAD INTERACTION ---
     if (activeInspectType && (isLeft || isRight || isUp || isDown)) {
       if (isLeft || isRight) {
         var delta = isRight ? 1 : -1;
@@ -647,11 +666,18 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
           inspectMyTeam(nextMon);
         }
       } else if (isUp || isDown) {
+        // In 0 menu: D-Pad Up/Down toggles between Move and Switch inspection
         if (activeInspectType === 'move') {
           var switchSlots = getValidSwitchSlots();
           inspectPokemon(switchSlots[0] || 1);
         } else if (activeInspectType === 'switch') {
           inspectMove(1);
+        } else if (activeInspectType === 'opponent' || activeInspectType === 'myteam') {
+          // In 1 & 2 menus: D-Pad Up/Down scrolls the detailed text/moves info
+          var bodyEl = document.getElementById('cp-insp-body');
+          if (bodyEl) {
+            bodyEl.scrollTop += isDown ? 35 : -35;
+          }
         }
       }
       e.preventDefault();
@@ -663,6 +689,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       e.stopImmediatePropagation();
     }
 
+    // --- CALL / ENTER -> EXECUTE ACTION ---
     if (isCall || isEnter) {
       if (activeInspectType === 'move') {
         var moveBtn = document.querySelector('button[name="chooseMove"][value="' + activeInspectIndex + '"]') ||
@@ -723,6 +750,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       }
     }
 
+    // --- # / ESCAPE -> CLOSE INSPECTOR OR UNDO ---
     if (isHashOrEscape) {
       if (activeInspectType) {
         hideInspector();
@@ -743,6 +771,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       return;
     }
 
+    // --- 0 -> UNIFIED MODAL TOGGLE (MOVES / SWITCHES ONLY) ---
     if (key === '0' || code === 48) {
       if (activeInspectType === 'move' || activeInspectType === 'switch') {
         hideInspector();
@@ -762,6 +791,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       return;
     }
 
+    // --- 1 -> OPPONENT PROFILE & WEAKNESS INSPECTOR ---
     if (key === '1' || code === 49) {
       if (activeInspectType === 'opponent') {
         hideInspector();
@@ -773,6 +803,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       return;
     }
 
+    // --- 2 -> MY TEAM DEFENSIVE PROFILE & /DT INSPECTOR ---
     if (key === '2' || code === 50 || eventCode === 'Digit2' || eventCode === 'Numpad2') {
       if (activeInspectType === 'myteam') {
         hideInspector();
@@ -784,6 +815,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       return;
     }
 
+    // --- 9 -> TOGGLE FLOATING CHAT & LOG MODAL ---
     if (key === '9' || code === 57 || eventCode === 'Digit9' || eventCode === 'Numpad9') {
       toggleChatModal();
       e.preventDefault();
@@ -791,6 +823,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       return;
     }
 
+    // --- * -> TERA / GIMMICK ---
     if (key === '*' || code === 106 || eventCode === 'NumpadMultiply') {
       var tera = document.querySelector('input[name="terastallize"], input[name="megaEvolution"]');
       if (tera) {
@@ -868,13 +901,19 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     var pDex = (window.BattlePokedex && BattlePokedex[speciesKey]) || (window.Dex && Dex.species ? Dex.species.get(speciesKey) : null);
 
     var monTypes = (mon && mon.types) || (pDex && pDex.types) || [];
-    var monSpeed = (mon && mon.stats && mon.stats.spe) ? mon.stats.spe : (pDex && pDex.baseStats ? pDex.baseStats.spe : '—');
+    var s = (mon && mon.stats) ? mon.stats : ((pDex && pDex.baseStats) ? pDex.baseStats : {});
 
     var html = '';
     if (mon) {
       var isDead = mon.condition && mon.condition.includes('fnt');
       html += '<div><b>Types:</b> ' + (monTypes.join(' / ') || 'Unknown') + (mon.teraType ? ' [Tera: ' + mon.teraType + ']' : '') + '</div>';
-      html += '<div><b>Speed:</b> <span style="color:#00ffcc;font-weight:bold;">' + monSpeed + '</span> &nbsp;|&nbsp; <b>HP:</b> ' + mon.condition + '</div>';
+
+      // Full Stat Matrix (HP, Spe, Atk, Def, SpA, SpD)
+      html += '<div style="background:rgba(255,255,255,0.06);padding:2px 4px;border-radius:3px;margin:2px 0;font-size:9px;">' +
+              '<b>HP:</b> ' + (mon.condition || '—') + ' &nbsp;|&nbsp; <b>Spe:</b> <span style="color:#00ffcc;font-weight:bold;">' + (s.spe || '—') + '</span><br>' +
+              '<b>Atk:</b> ' + (s.atk || '—') + ' | <b>Def:</b> ' + (s.def || '—') + ' | <b>SpA:</b> ' + (s.spa || '—') + ' | <b>SpD:</b> ' + (s.spd || '—') +
+              '</div>';
+
       if (mon.item) html += '<div><b>Item:</b> ' + mon.item + '</div>';
       if (mon.ability) html += '<div><b>Ability:</b> ' + mon.ability + '</div>';
 
@@ -1017,7 +1056,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       monTypes = (mon.terastallized && mon.terastallized !== 'Stellar') ? [mon.terastallized] : monTypes;
     }
 
-    var monSpeed = (mon && mon.stats && mon.stats.spe) ? mon.stats.spe : ((pDex && pDex.baseStats && pDex.baseStats.spe) ? (pDex.baseStats.spe + ' (Base)') : '—');
+    var s = (mon && mon.stats) ? mon.stats : ((pDex && pDex.baseStats) ? pDex.baseStats : {});
     var itemDesc = getItemDesc(mon ? mon.item : '');
     var abilityDesc = getAbilityDesc(mon ? mon.ability : '');
 
@@ -1026,7 +1065,13 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
     var html = '';
     html += '<div><b>Types:</b> ' + (monTypes.join(' / ') || 'Unknown') + (mon && mon.teraType ? ' [Tera: ' + mon.teraType + ']' : '') + statusBadge + '</div>';
-    html += '<div><b>Speed:</b> <span style="color:#00ffcc;font-weight:bold;">' + monSpeed + '</span> &nbsp;|&nbsp; <b>HP:</b> ' + (mon ? (mon.condition || '—') : '—') + '</div>';
+
+    // Full Stat Matrix (HP, Spe, Atk, Def, SpA, SpD)
+    html += '<div style="background:rgba(255,255,255,0.06);padding:2px 4px;border-radius:3px;margin:2px 0;font-size:9px;">' +
+            '<b>HP:</b> ' + (mon ? (mon.condition || '—') : '—') + ' &nbsp;|&nbsp; <b>Spe:</b> <span style="color:#00ffcc;font-weight:bold;">' + (s.spe || '—') + '</span><br>' +
+            '<b>Atk:</b> ' + (s.atk || '—') + ' | <b>Def:</b> ' + (s.def || '—') + ' | <b>SpA:</b> ' + (s.spa || '—') + ' | <b>SpD:</b> ' + (s.spd || '—') +
+            '</div>';
+
     html += '<div style="margin-top:2px;"><b>Item:</b> ' + (mon && mon.item ? mon.item : 'None') + '</div>';
     if (itemDesc) html += '<div style="color:#aaa;font-size:8.5px;margin-bottom:2px;">↳ ' + itemDesc + '</div>';
     html += '<div><b>Ability:</b> ' + (mon && mon.ability ? mon.ability : 'Unknown') + '</div>';
