@@ -1,102 +1,9 @@
-import express from "express";
-import http from "http";
-import httpProxy from "http-proxy";
-import zlib from "zlib";
-
-const app = express();
-app.set("trust proxy", 1);
-
 const TARGET_WEB = "https://play.pokemonshowdown.com";
 const TARGET_SIM = "https://sim3.psim.us";
 
-const webProxy = httpProxy.createProxyServer({
-  target: TARGET_WEB,
-  changeOrigin: true,
-  secure: true,
-  selfHandleResponse: true,
-});
+const AD_TRACKER_PATTERN = /(analytics\.js|gtag\/js|ga\.js|ad-manager\.js|pubads.*\.js|adx-floors\.js|afihbs\.js)/i;
 
-const simProxy = httpProxy.createProxyServer({
-  target: TARGET_SIM,
-  changeOrigin: true,
-  secure: true,
-  ws: true,
-});
-
-function forwardClientIp(proxyReq, req) {
-  const clientIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
-  if (clientIp) {
-    proxyReq.setHeader("x-forwarded-for", clientIp);
-    proxyReq.setHeader("x-real-ip", clientIp.split(",")[0].trim());
-  }
-}
-
-webProxy.on("proxyReq", (proxyReq, req) => {
-  forwardClientIp(proxyReq, req);
-});
-
-simProxy.on("proxyReqWs", (proxyReq, req) => {
-  forwardClientIp(proxyReq, req);
-});
-
-function sanitizeHeaders(proxyRes) {
-  delete proxyRes.headers["content-security-policy"];
-  delete proxyRes.headers["content-security-policy-report-only"];
-  delete proxyRes.headers["x-frame-options"];
-  delete proxyRes.headers["cross-origin-opener-policy"];
-  delete proxyRes.headers["cross-origin-embedder-policy"];
-  proxyRes.headers["access-control-allow-origin"] = "*";
-  proxyRes.headers["access-control-allow-credentials"] = "true";
-
-  const setCookie = proxyRes.headers["set-cookie"];
-  if (setCookie) {
-    proxyRes.headers["set-cookie"] = (
-      Array.isArray(setCookie) ? setCookie : [setCookie]
-    ).map((cookie) => cookie.replace(/;\s*Domain=[^;]+/i, ""));
-  }
-}
-
-function decompressBuffer(buffer, encoding) {
-  if (!buffer || buffer.length === 0) return buffer;
-  try {
-    if (encoding === "gzip" || encoding === "deflate") {
-      return zlib.unzipSync(buffer);
-    } else if (encoding === "br") {
-      return zlib.brotliDecompressSync(buffer);
-    }
-  } catch (e) {
-    return buffer;
-  }
-  return buffer;
-}
-
-webProxy.on("proxyRes", sanitizeHeaders);
-
-webProxy.on("proxyRes", (proxyRes, req, res) => {
-  const publicHost = req.headers.host || "";
-  const location = proxyRes.headers["location"];
-  if (location && publicHost) {
-    proxyRes.headers["location"] = location
-      .replace("https://play.pokemonshowdown.com", `https://${publicHost}`)
-      .replace("http://play.pokemonshowdown.com", `https://${publicHost}`);
-  }
-
-  const chunks = [];
-  proxyRes.on("data", (chunk) => chunks.push(chunk));
-  proxyRes.on("end", () => {
-    let body = Buffer.concat(chunks);
-    const contentType = proxyRes.headers["content-type"] || "";
-    const contentEncoding = proxyRes.headers["content-encoding"];
-
-    if (contentType.includes("text/html")) {
-      body = decompressBuffer(body, contentEncoding);
-      delete proxyRes.headers["content-encoding"];
-
-      let text = body.toString("utf8");
-      text = text.split("//play.pokemonshowdown.com/config/config.js")
-                 .join(`//${publicHost}/config/config.js`);
-
-      const injectedHead = `
+const INJECTED_HEAD = `
 <style>
   /* 1. Suppression of Native Hover Tooltips */
   #tooltipwrapper,
@@ -179,14 +86,14 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 </style>
 `;
 
-      const injectedBody = `
+const INJECTED_BODY = `
 <script>
 (function() {
   try {
     window.localStorage.setItem('showdown_crossteams', 'false');
   } catch (e) {}
 
-  var activeInspectType = null; // 'move' | 'switch' | 'opponent' | 'myteam'
+  var activeInspectType = null;
   var activeInspectIndex = 1;
   var chatSyncTimer = null;
 
@@ -666,14 +573,12 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
           inspectMyTeam(nextMon);
         }
       } else if (isUp || isDown) {
-        // In 0 menu: D-Pad Up/Down toggles between Move and Switch inspection
         if (activeInspectType === 'move') {
           var switchSlots = getValidSwitchSlots();
           inspectPokemon(switchSlots[0] || 1);
         } else if (activeInspectType === 'switch') {
           inspectMove(1);
         } else if (activeInspectType === 'opponent' || activeInspectType === 'myteam') {
-          // In 1 & 2 menus: D-Pad Up/Down scrolls the detailed text/moves info
           var bodyEl = document.getElementById('cp-insp-body');
           if (bodyEl) {
             bodyEl.scrollTop += isDown ? 35 : -35;
@@ -908,7 +813,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       var isDead = mon.condition && mon.condition.includes('fnt');
       html += '<div><b>Types:</b> ' + (monTypes.join(' / ') || 'Unknown') + (mon.teraType ? ' [Tera: ' + mon.teraType + ']' : '') + '</div>';
 
-      // Full Stat Matrix (HP, Spe, Atk, Def, SpA, SpD)
       html += '<div style="background:rgba(255,255,255,0.06);padding:2px 4px;border-radius:3px;margin:2px 0;font-size:9px;">' +
               '<b>HP:</b> ' + (mon.condition || '—') + ' &nbsp;|&nbsp; <b>Spe:</b> <span style="color:#00ffcc;font-weight:bold;">' + (s.spe || '—') + '</span><br>' +
               '<b>Atk:</b> ' + (s.atk || '—') + ' | <b>Def:</b> ' + (s.def || '—') + ' | <b>SpA:</b> ' + (s.spa || '—') + ' | <b>SpD:</b> ' + (s.spd || '—') +
@@ -1066,7 +970,6 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     var html = '';
     html += '<div><b>Types:</b> ' + (monTypes.join(' / ') || 'Unknown') + (mon && mon.teraType ? ' [Tera: ' + mon.teraType + ']' : '') + statusBadge + '</div>';
 
-    // Full Stat Matrix (HP, Spe, Atk, Def, SpA, SpD)
     html += '<div style="background:rgba(255,255,255,0.06);padding:2px 4px;border-radius:3px;margin:2px 0;font-size:9px;">' +
             '<b>HP:</b> ' + (mon ? (mon.condition || '—') : '—') + ' &nbsp;|&nbsp; <b>Spe:</b> <span style="color:#00ffcc;font-weight:bold;">' + (s.spe || '—') + '</span><br>' +
             '<b>Atk:</b> ' + (s.atk || '—') + ' | <b>Def:</b> ' + (s.def || '—') + ' | <b>SpA:</b> ' + (s.spa || '—') + ' | <b>SpD:</b> ' + (s.spd || '—') +
@@ -1144,61 +1047,51 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     setTimeout(attemptConnect, 100);
   });
 })();
-</script>`;
+</script>
+`;
 
-      text = text.replace("<head>", `<head>${injectedHead}`);
-      text = text.includes("</body>")
-        ? text.replace("</body>", `${injectedBody}</body>`)
-        : text + injectedBody;
+function sanitizeResponseHeaders(originalHeaders) {
+  const headers = new Headers(originalHeaders);
+  headers.delete("content-security-policy");
+  headers.delete("content-security-policy-report-only");
+  headers.delete("x-frame-options");
+  headers.delete("cross-origin-opener-policy");
+  headers.delete("cross-origin-embedder-policy");
+  headers.set("access-control-allow-origin", "*");
+  headers.set("access-control-allow-credentials", "true");
+  return headers;
+}
 
-      body = Buffer.from(text, "utf8");
-      proxyRes.headers["content-length"] = Buffer.byteLength(body);
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    const publicHost = request.headers.get("host") || url.host;
+
+    // 1. Short-circuit ad and analytics networks
+    if (AD_TRACKER_PATTERN.test(url.pathname)) {
+      return new Response("// Ad/Analytics disabled by proxy", {
+        status: 200,
+        headers: {
+          "Content-Type": "application/javascript; charset=utf-8",
+          "Cache-Control": "public, max-age=86400",
+        },
+      });
     }
 
-    res.writeHead(proxyRes.statusCode, proxyRes.headers);
-    res.end(body);
-  });
-});
+    // 2. Intercept /config/config.js
+    if (url.pathname === "/config/config.js") {
+      try {
+        const upstreamReq = new Request(`${TARGET_WEB}/config/config.js`, {
+          headers: {
+            "User-Agent": request.headers.get("user-agent") || "Mozilla/5.0",
+            Referer: `${TARGET_WEB}/`,
+            Origin: TARGET_WEB,
+          },
+        });
+        const resp = await fetch(upstreamReq);
+        let configText = await resp.text();
 
-webProxy.on("error", (err, req, res) => {
-  if (res && res.writeHead && !res.headersSent) {
-    res.writeHead(502, { "Content-Type": "text/plain" });
-    res.end("Web proxy connection error.");
-  }
-});
-
-simProxy.on("error", (err, req, socket) => {
-  if (socket && socket.destroy) socket.destroy();
-});
-
-app.get([
-  /(analytics\.js|gtag\/js|ga\.js)/,
-  /ad-manager\.js/,
-  /pubads.*\.js/,
-  /adx-floors\.js/,
-  /afihbs\.js/,
-], (req, res) => {
-  res.setHeader("Content-Type", "application/javascript; charset=utf-8");
-  res.setHeader("Cache-Control", "public, max-age=86400");
-  return res.send("// Ad/Analytics disabled by proxy");
-});
-
-app.get("/config/config.js", async (req, res) => {
-  try {
-    const fetchOptions = {
-      headers: {
-        "User-Agent": req.headers["user-agent"] || "Mozilla/5.0",
-        Referer: `${TARGET_WEB}/`,
-        Origin: TARGET_WEB,
-        "Accept-Encoding": "identity",
-      },
-    };
-
-    const response = await fetch(`${TARGET_WEB}/config/config.js`, fetchOptions);
-    let text = await response.text();
-    const currentHost = req.headers.host || "localhost";
-
-    text += `
+        configText += `
 Config.server = Config.defaultserver = {
   id: 'showdown',
   host: 'sim3.psim.us',
@@ -1208,58 +1101,106 @@ Config.server = Config.defaultserver = {
   ssl: true
 };
 Config.routes = Config.routes || {};
-Config.routes.client = ${JSON.stringify(currentHost)};
+Config.routes.client = ${JSON.stringify(publicHost)};
 `;
 
-    res.setHeader("Content-Type", "application/javascript; charset=utf-8");
-    res.setHeader("Cache-Control", "no-store");
-    return res.send(text);
-  } catch (err) {
-    return res.status(500).send(`// Config proxy error: ${err.message}`);
-  }
-});
+        return new Response(configText, {
+          status: 200,
+          headers: {
+            "Content-Type": "application/javascript; charset=utf-8",
+            "Cache-Control": "no-store",
+            "Access-Control-Allow-Origin": "*",
+          },
+        });
+      } catch (err) {
+        return new Response(`// Config proxy error: ${err.message}`, {
+          status: 500,
+          headers: { "Content-Type": "application/javascript; charset=utf-8" },
+        });
+      }
+    }
 
-app.use((req, res) => {
-  if (req.url.startsWith("/showdown")) {
-    simProxy.web(req, res, {
-      headers: {
-        Host: "sim3.psim.us",
-        Origin: TARGET_WEB,
-        Referer: `${TARGET_WEB}/`,
-      },
-    });
-  } else {
-    webProxy.web(req, res, {
-      headers: {
-        Host: "play.pokemonshowdown.com",
-        Origin: TARGET_WEB,
-        Referer: `${TARGET_WEB}/`,
-      },
-    });
-  }
-});
+    // 3. Dispatch Target: Simulator (/showdown) or Web Client
+    const isSim = url.pathname.startsWith("/showdown");
+    const targetBase = isSim ? TARGET_SIM : TARGET_WEB;
+    const targetUrl = new URL(url.pathname + url.search, targetBase);
 
-const server = http.createServer(app);
+    // Clone headers and forward IP
+    const forwardHeaders = new Headers(request.headers);
+    forwardHeaders.set("Host", targetUrl.host);
+    forwardHeaders.set("Origin", TARGET_WEB);
+    forwardHeaders.set("Referer", `${TARGET_WEB}/`);
 
-server.on("upgrade", (req, socket, head) => {
-  if (req.url.startsWith("/showdown")) {
-    simProxy.ws(req, socket, head, {
-      headers: {
-        Host: "sim3.psim.us",
-        Origin: TARGET_WEB,
-      },
-    });
-  } else {
-    webProxy.ws(req, socket, head, {
-      headers: {
-        Host: "play.pokemonshowdown.com",
-        Origin: TARGET_WEB,
-      },
-    });
-  }
-});
+    const clientIp = request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for");
+    if (clientIp) {
+      forwardHeaders.set("x-forwarded-for", clientIp);
+      forwardHeaders.set("x-real-ip", clientIp.split(",")[0].trim());
+    }
 
-const PORT = Number(process.env.PORT || 3000);
-server.listen(PORT, () => {
-  console.log(`Showdown proxy active on port ${PORT}`);
-});
+    const proxyRequest = new Request(targetUrl.toString(), {
+      method: request.method,
+      headers: forwardHeaders,
+      body: request.body,
+      redirect: "manual",
+    });
+
+    // Handle Native WebSocket Upgrades automatically via Cloudflare Workers fetch
+    const response = await fetch(proxyRequest);
+
+    // If WebSocket upgrade response (101), return directly
+    if (response.status === 101) {
+      return response;
+    }
+
+    const resHeaders = sanitizeResponseHeaders(response.headers);
+
+    // Rewrite redirects pointing to play.pokemonshowdown.com
+    const location = resHeaders.get("location");
+    if (location && publicHost) {
+      resHeaders.set(
+        "location",
+        location
+          .replace("https://play.pokemonshowdown.com", `https://${publicHost}`)
+          .replace("http://play.pokemonshowdown.com", `https://${publicHost}`)
+      );
+    }
+
+    // Rewrite cookies to drop domain restrictions
+    const setCookie = resHeaders.get("set-cookie");
+    if (setCookie) {
+      resHeaders.set("set-cookie", setCookie.replace(/;\s*Domain=[^;]+/gi, ""));
+    }
+
+    const contentType = resHeaders.get("content-type") || "";
+
+    // 4. Inject HTML styles and scripts
+    if (contentType.includes("text/html")) {
+      let html = await response.text();
+
+      html = html
+        .split("//play.pokemonshowdown.com/config/config.js")
+        .join(`//${publicHost}/config/config.js`);
+
+      html = html.replace("<head>", `<head>${INJECTED_HEAD}`);
+      html = html.includes("</body>")
+        ? html.replace("</body>", `${INJECTED_BODY}</body>`)
+        : html + INJECTED_BODY;
+
+      resHeaders.delete("content-length");
+      resHeaders.delete("content-encoding");
+
+      return new Response(html, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: resHeaders,
+      });
+    }
+
+    // 5. Pass through static files and API responses directly
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: resHeaders,
+    });
+  },
+};
