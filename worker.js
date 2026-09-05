@@ -93,7 +93,7 @@ const INJECTED_BODY = `
     window.localStorage.setItem('showdown_crossteams', 'false');
   } catch (e) {}
 
-  var activeInspectType = null;
+  var activeInspectType = null; // 'move' | 'opponent' | 'myteam'
   var activeInspectIndex = 1;
   var chatSyncTimer = null;
 
@@ -169,6 +169,15 @@ const INJECTED_BODY = `
     return html;
   }
 
+  function isMonAlive(p) {
+    if (!p) return false;
+    if (p.fainted) return false;
+    if (p.status === 'fnt') return false;
+    if (p.condition && (p.condition.includes('fnt') || p.condition === '0 fnt')) return false;
+    if (p.hp !== undefined && p.maxhp && p.hp === 0) return false;
+    return true;
+  }
+
   function getInspectorEl() {
     var el = document.getElementById('cp-inspector');
     if (!el) {
@@ -189,7 +198,7 @@ const INJECTED_BODY = `
     activeInspectType = null;
   }
 
-  function showInspector(title, bodyHtml, type, index) {
+  function showInspector(title, bodyHtml, type, index, isSelfActive) {
     hideChatModal();
     var el = getInspectorEl();
     var titleEl = document.getElementById('cp-insp-title');
@@ -202,12 +211,16 @@ const INJECTED_BODY = `
       bodyEl.scrollTop = 0;
     }
     if (footEl) {
-      if (type === 'move' || type === 'switch') {
-        footEl.innerHTML = '[CALL] Use | [◄►] Cycle | [▲▼] Move ↔ Switch | [#] Close';
+      if (type === 'move') {
+        footEl.innerHTML = '[CALL/OK] Use Move | [◄►] Cycle Moves | [▲▼] Scroll | [#] Cancel';
       } else if (type === 'opponent') {
         footEl.innerHTML = '[◄►] Cycle Foe | [▲▼] Scroll | [#] Close';
       } else if (type === 'myteam') {
-        footEl.innerHTML = '[◄►] Cycle Team | [▲▼] Scroll | [#] Close';
+        if (isSelfActive) {
+          footEl.innerHTML = '<span style="color:#ffcc00;">[CURRENTLY IN BATTLE]</span> | [◄►] Cycle | [▲▼] Scroll | [#] Close';
+        } else {
+          footEl.innerHTML = '[CALL/OK] Switch In | [◄►] Cycle | [▲▼] Scroll | [#] Close';
+        }
       }
     }
 
@@ -339,19 +352,59 @@ const INJECTED_BODY = `
     return null;
   }
 
-  function getValidSwitchSlots() {
-    var req = getBattleRequest();
-    var valid = [];
-    if (req && req.side && req.side.pokemon) {
-      for (var i = 0; i < req.side.pokemon.length; i++) {
-        var p = req.side.pokemon[i];
-        var isDead = p.condition && p.condition.includes('fnt');
-        if (!p.active && !isDead) {
-          valid.push(i + 1);
+  function cancelSelectedMove() {
+    var undoBtn = document.querySelector('button[name="undo"], button[name="clearMove"], button[name="chooseUndo"], button[value="undo"], button[value="cancel"]');
+    if (undoBtn) {
+      undoBtn.click();
+      return true;
+    }
+    var room = getBattleRoom();
+    if (room) {
+      if (typeof room.undo === 'function') {
+        room.undo();
+        return true;
+      }
+      if (typeof room.send === 'function') {
+        room.send('/undo');
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function executeSwitch(mon, slot) {
+    var monSpecies = mon ? (mon.details ? mon.details.split(',')[0].trim().toLowerCase() : (mon.name || mon.species || '').trim().toLowerCase()) : '';
+    var switchBtns = document.querySelectorAll('button[name="chooseSwitch"], button.switchselect');
+    var targetBtn = null;
+
+    for (var s = 0; s < switchBtns.length; s++) {
+      var btnText = switchBtns[s].innerText.toLowerCase();
+      if (monSpecies && btnText.includes(monSpecies)) {
+        targetBtn = switchBtns[s];
+        break;
+      }
+    }
+
+    if (!targetBtn) {
+      for (var s = 0; s < switchBtns.length; s++) {
+        var btnVal = parseInt(switchBtns[s].value, 10);
+        if (btnVal === slot || btnVal === (slot - 1)) {
+          targetBtn = switchBtns[s];
+          break;
         }
       }
     }
-    return valid.length > 0 ? valid : [1];
+
+    if (targetBtn) {
+      targetBtn.click();
+    } else {
+      var room = getBattleRoom();
+      if (room && typeof room.choose === 'function') {
+        room.choose('switch', slot);
+      } else if (room && typeof room.send === 'function') {
+        room.send('/choose switch ' + slot);
+      }
+    }
   }
 
   function getOpponentActive() {
@@ -379,6 +432,7 @@ const INJECTED_BODY = `
     return null;
   }
 
+  // Key 1: Only alive opponent Pokémon
   function getFoeTeam() {
     var room = getBattleRoom();
     if (!room || !room.battle) return [];
@@ -388,12 +442,12 @@ const INJECTED_BODY = `
 
     var active = (foeSide.active && foeSide.active[0]) ? foeSide.active[0] : getOpponentActive();
     var list = [];
-    if (active) list.push(active);
+    if (active && isMonAlive(active)) list.push(active);
 
     if (foeSide.pokemon && foeSide.pokemon.length) {
       for (var i = 0; i < foeSide.pokemon.length; i++) {
         var p = foeSide.pokemon[i];
-        if (p && p !== active && list.indexOf(p) === -1) {
+        if (p && p !== active && list.indexOf(p) === -1 && isMonAlive(p)) {
           list.push(p);
         }
       }
@@ -401,18 +455,33 @@ const INJECTED_BODY = `
     return list;
   }
 
-  function getMyTeam() {
+  // Key 2: Only alive teammates (Active + Bench)
+  function getMyAliveTeam() {
     var req = getBattleRequest();
+    var list = [];
     if (req && req.side && req.side.pokemon && req.side.pokemon.length) {
-      return req.side.pokemon;
+      for (var i = 0; i < req.side.pokemon.length; i++) {
+        var p = req.side.pokemon[i];
+        if (isMonAlive(p)) {
+          list.push({ mon: p, slot: i + 1 });
+        }
+      }
+      return list;
     }
     var room = getBattleRoom();
     if (room && room.battle) {
       var b = room.battle;
       var mySide = b.yourSide || (b.sides && (b.mySide && b.mySide.n !== undefined ? b.sides[b.mySide.n] : b.sides[0])) || b.mySide;
-      if (mySide && mySide.pokemon) return mySide.pokemon;
+      if (mySide && mySide.pokemon) {
+        for (var j = 0; j < mySide.pokemon.length; j++) {
+          var mon = mySide.pokemon[j];
+          if (isMonAlive(mon)) {
+            list.push({ mon: mon, slot: j + 1 });
+          }
+        }
+      }
     }
-    return [];
+    return list;
   }
 
   function getOpponentTypes(customFoe) {
@@ -479,7 +548,8 @@ const INJECTED_BODY = `
 
     var isCall = (key === 'Call' || code === 0 || code === 170);
     var isEnter = (key === 'Enter' || code === 13);
-    var isHashOrEscape = (key === '#' || key === 'Hash' || key === 'Pound' || key === 'Escape' || code === 27);
+    var isHash = (key === '#' || key === 'Hash' || key === 'Pound' || code === 192);
+    var isEscape = (key === 'Escape' || code === 27);
 
     if (isCall) {
       e.preventDefault();
@@ -501,7 +571,7 @@ const INJECTED_BODY = `
           e.stopImmediatePropagation();
           return;
         }
-        if (isHashOrEscape) {
+        if (isHash || isEscape) {
           chatInput.blur();
           hideChatModal();
           e.preventDefault();
@@ -529,7 +599,7 @@ const INJECTED_BODY = `
         e.stopImmediatePropagation();
         return;
       }
-      if (isHashOrEscape || key === '9' || code === 57 || eventCode === 'Digit9' || eventCode === 'Numpad9') {
+      if (isHash || isEscape || key === '9' || code === 57 || eventCode === 'Digit9' || eventCode === 'Numpad9') {
         hideChatModal();
         e.preventDefault();
         e.stopImmediatePropagation();
@@ -542,7 +612,7 @@ const INJECTED_BODY = `
     var isLeft = (key === 'ArrowLeft' || code === 37);
     var isRight = (key === 'ArrowRight' || code === 39);
 
-    // --- INSPECTOR DPAD INTERACTION ---
+    // --- INSPECTOR DPAD INTERACTION (◄►: Cycle | ▲▼: Scroll) ---
     if (activeInspectType && (isLeft || isRight || isUp || isDown)) {
       if (isLeft || isRight) {
         var delta = isRight ? 1 : -1;
@@ -551,38 +621,27 @@ const INJECTED_BODY = `
           if (nextMove > 4) nextMove = 1;
           if (nextMove < 1) nextMove = 4;
           inspectMove(nextMove);
-        } else if (activeInspectType === 'switch') {
-          var validSlots = getValidSwitchSlots();
-          var curIdx = validSlots.indexOf(activeInspectIndex);
-          if (curIdx === -1) curIdx = 0;
-          var nextIdx = curIdx + delta;
-          if (nextIdx >= validSlots.length) nextIdx = 0;
-          if (nextIdx < 0) nextIdx = validSlots.length - 1;
-          inspectPokemon(validSlots[nextIdx]);
         } else if (activeInspectType === 'opponent') {
           var foeTeam = getFoeTeam();
-          var nextFoe = activeInspectIndex + delta;
-          if (nextFoe > foeTeam.length) nextFoe = 1;
-          if (nextFoe < 1) nextFoe = foeTeam.length;
-          inspectOpponent(nextFoe);
+          if (foeTeam.length > 0) {
+            var nextFoe = activeInspectIndex + delta;
+            if (nextFoe > foeTeam.length) nextFoe = 1;
+            if (nextFoe < 1) nextFoe = foeTeam.length;
+            inspectOpponent(nextFoe);
+          }
         } else if (activeInspectType === 'myteam') {
-          var myTeam = getMyTeam();
-          var nextMon = activeInspectIndex + delta;
-          if (nextMon > myTeam.length) nextMon = 1;
-          if (nextMon < 1) nextMon = myTeam.length;
-          inspectMyTeam(nextMon);
+          var aliveTeam = getMyAliveTeam();
+          if (aliveTeam.length > 0) {
+            var nextMon = activeInspectIndex + delta;
+            if (nextMon > aliveTeam.length) nextMon = 1;
+            if (nextMon < 1) nextMon = aliveTeam.length;
+            inspectMyTeam(nextMon);
+          }
         }
       } else if (isUp || isDown) {
-        if (activeInspectType === 'move') {
-          var switchSlots = getValidSwitchSlots();
-          inspectPokemon(switchSlots[0] || 1);
-        } else if (activeInspectType === 'switch') {
-          inspectMove(1);
-        } else if (activeInspectType === 'opponent' || activeInspectType === 'myteam') {
-          var bodyEl = document.getElementById('cp-insp-body');
-          if (bodyEl) {
-            bodyEl.scrollTop += isDown ? 35 : -35;
-          }
+        var bodyEl = document.getElementById('cp-insp-body');
+        if (bodyEl) {
+          bodyEl.scrollTop += isDown ? 35 : -35;
         }
       }
       e.preventDefault();
@@ -594,7 +653,7 @@ const INJECTED_BODY = `
       e.stopImmediatePropagation();
     }
 
-    // --- CALL / ENTER -> EXECUTE ACTION ---
+    // --- CALL / ENTER -> EXECUTE ACTION (Move or Switch) ---
     if (isCall || isEnter) {
       if (activeInspectType === 'move') {
         var moveBtn = document.querySelector('button[name="chooseMove"][value="' + activeInspectIndex + '"]') ||
@@ -604,89 +663,52 @@ const INJECTED_BODY = `
         e.preventDefault();
         e.stopImmediatePropagation();
         return;
-      } else if (activeInspectType === 'switch') {
-        var req = getBattleRequest();
-        var mon = req && req.side && req.side.pokemon && req.side.pokemon[activeInspectIndex - 1];
-
-        if (mon && mon.condition && mon.condition.includes('fnt')) {
-          hideInspector();
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          return;
-        }
-
-        var monSpecies = mon ? mon.details.split(',')[0].trim().toLowerCase() : '';
-        var switchBtns = document.querySelectorAll('button[name="chooseSwitch"], button.switchselect');
-        var targetBtn = null;
-
-        for (var s = 0; s < switchBtns.length; s++) {
-          var btnText = switchBtns[s].innerText.toLowerCase();
-          if (monSpecies && btnText.includes(monSpecies)) {
-            targetBtn = switchBtns[s];
-            break;
+      } else if (activeInspectType === 'myteam') {
+        var aliveTeam = getMyAliveTeam();
+        var target = aliveTeam[activeInspectIndex - 1];
+        if (target && target.mon) {
+          if (!target.mon.active) {
+            executeSwitch(target.mon, target.slot);
+            hideInspector();
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            return;
           }
         }
-
-        if (!targetBtn) {
-          for (var s = 0; s < switchBtns.length; s++) {
-            var btnVal = parseInt(switchBtns[s].value, 10);
-            if (btnVal === activeInspectIndex || btnVal === (activeInspectIndex - 1)) {
-              targetBtn = switchBtns[s];
-              break;
-            }
-          }
-        }
-
-        if (targetBtn) {
-          targetBtn.click();
-        } else {
-          var room = getBattleRoom();
-          if (room && typeof room.choose === 'function') {
-            room.choose('switch', activeInspectIndex);
-          } else if (room && typeof room.send === 'function') {
-            room.send('/choose switch ' + activeInspectIndex);
-          }
-        }
-
-        hideInspector();
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        return;
       }
     }
 
-    // --- # / ESCAPE -> CLOSE INSPECTOR OR UNDO ---
-    if (isHashOrEscape) {
+    // --- # -> CANCEL SELECTED MOVE / UNDO ---
+    if (isHash) {
+      cancelSelectedMove();
       if (activeInspectType) {
         hideInspector();
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        return;
-      }
-
-      var undoBtn = document.querySelector('button[name="undo"], button[name="clearMove"], button[name="chooseUndo"], button[value="undo"], button[value="cancel"]');
-      if (undoBtn) {
-        undoBtn.click();
-      } else {
-        var room = getBattleRoom();
-        if (room && typeof room.send === 'function') room.send('/undo');
       }
       e.preventDefault();
       e.stopImmediatePropagation();
       return;
     }
 
-    // --- 0 -> UNIFIED MODAL TOGGLE (MOVES / SWITCHES ONLY) ---
+    // --- ESCAPE -> CLOSE MODAL OR UNDO ---
+    if (isEscape) {
+      if (activeInspectType) {
+        hideInspector();
+      } else {
+        cancelSelectedMove();
+      }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
+
+    // --- 0 -> MOVE SELECTION MODAL ONLY ---
     if (key === '0' || code === 48) {
-      if (activeInspectType === 'move' || activeInspectType === 'switch') {
+      if (activeInspectType === 'move') {
         hideInspector();
       } else {
         var focused = document.activeElement;
         if (focused && focused.name === 'chooseMove') {
           inspectMove(focused.value || '1');
-        } else if (focused && (focused.name === 'chooseSwitch' || focused.classList.contains('switchselect'))) {
-          var validSlots = getValidSwitchSlots();
-          inspectPokemon(validSlots[0] || 1);
         } else {
           inspectMove('1');
         }
@@ -696,7 +718,7 @@ const INJECTED_BODY = `
       return;
     }
 
-    // --- 1 -> OPPONENT PROFILE & WEAKNESS INSPECTOR ---
+    // --- 1 -> OPPONENT ALIVE ROSTER & WEAKNESSES ---
     if (key === '1' || code === 49) {
       if (activeInspectType === 'opponent') {
         hideInspector();
@@ -708,7 +730,7 @@ const INJECTED_BODY = `
       return;
     }
 
-    // --- 2 -> MY TEAM DEFENSIVE PROFILE & /DT INSPECTOR ---
+    // --- 2 -> MY TEAM & DIRECT SWITCH MENU (ALIVE MONS ONLY) ---
     if (key === '2' || code === 50 || eventCode === 'Digit2' || eventCode === 'Numpad2') {
       if (activeInspectType === 'myteam') {
         hideInspector();
@@ -728,18 +750,19 @@ const INJECTED_BODY = `
       return;
     }
 
-    // --- * -> TERA / GIMMICK ---
+    // --- * -> TOGGLE TERASTALLIZE / GIMMICK ---
     if (key === '*' || code === 106 || eventCode === 'NumpadMultiply') {
-      var tera = document.querySelector('input[name="terastallize"], input[name="megaEvolution"]');
+      var tera = document.querySelector('input[name="terastallize"], input[name="megaEvolution"], input[name="dynamax"], input[name="zmove"], button[name="terastallize"]');
       if (tera) {
         tera.click();
-        e.preventDefault();
-        e.stopImmediatePropagation();
       }
+      e.preventDefault();
+      e.stopImmediatePropagation();
       return;
     }
   }, true);
 
+  // 0 Menu: Move Selection Only
   function inspectMove(index) {
     index = Number(index) || 1;
     var moveBtn = document.querySelector('button[name="chooseMove"][value="' + index + '"]') ||
@@ -789,70 +812,15 @@ const INJECTED_BODY = `
       html += '<div style="color:#ff5555;font-weight:bold;margin-top:2px;">[DISABLED]</div>';
     }
 
-    showInspector('⚡ Move ' + index + '/4: ' + moveName, html, 'move', index);
+    showInspector('⚡ Move ' + index + '/4: ' + moveName, html, 'move', index, false);
   }
 
-  function inspectPokemon(slot) {
-    slot = Number(slot) || 1;
-    var req = getBattleRequest();
-    var mon = req && req.side && req.side.pokemon && req.side.pokemon[slot - 1];
-
-    var foeTypes = getOpponentTypes();
-    var foe = getOpponentActive();
-    var foeName = foe ? (foe.name || foe.species || 'Opponent').replace(/^p[12]:\\s*/i, '') : 'Opponent';
-
-    var rawDetails = mon ? mon.details.split(',')[0] : ('Slot ' + slot);
-    var speciesKey = rawDetails.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-    var pDex = (window.BattlePokedex && BattlePokedex[speciesKey]) || (window.Dex && Dex.species ? Dex.species.get(speciesKey) : null);
-
-    var monTypes = (mon && mon.types) || (pDex && pDex.types) || [];
-    var s = (mon && mon.stats) ? mon.stats : ((pDex && pDex.baseStats) ? pDex.baseStats : {});
-
-    var html = '';
-    if (mon) {
-      var isDead = mon.condition && mon.condition.includes('fnt');
-      html += '<div><b>Types:</b> ' + (monTypes.join(' / ') || 'Unknown') + (mon.teraType ? ' [Tera: ' + mon.teraType + ']' : '') + '</div>';
-
-      html += '<div style="background:rgba(255,255,255,0.06);padding:2px 4px;border-radius:3px;margin:2px 0;font-size:9px;">' +
-              '<b>HP:</b> ' + (mon.condition || '—') + ' &nbsp;|&nbsp; <b>Spe:</b> <span style="color:#00ffcc;font-weight:bold;">' + (s.spe || '—') + '</span><br>' +
-              '<b>Atk:</b> ' + (s.atk || '—') + ' | <b>Def:</b> ' + (s.def || '—') + ' | <b>SpA:</b> ' + (s.spa || '—') + ' | <b>SpD:</b> ' + (s.spd || '—') +
-              '</div>';
-
-      if (mon.item) html += '<div><b>Item:</b> ' + mon.item + '</div>';
-      if (mon.ability) html += '<div><b>Ability:</b> ' + mon.ability + '</div>';
-
-      if (mon.moves && mon.moves.length && !isDead) {
-        html += '<div style="margin-top:3px;border-top:1px solid #333;padding-top:2px;"><b>Bench Moves vs ' + foeName + ':</b></div>';
-        for (var i = 0; i < mon.moves.length; i++) {
-          var mName = mon.moves[i];
-          var mId = mName.toLowerCase().replace(/[^a-z0-9]/g, '');
-          var mData = (window.BattleMovedex && BattleMovedex[mId]) || (window.Dex && Dex.moves ? Dex.moves.get(mName) : null);
-          var mType = (mData && mData.type) || 'Normal';
-          var mCategory = (mData && mData.category) || '';
-          var mult = (mCategory === 'Status') ? 1 : getEffectiveness(mType, foeTypes);
-
-          html += '<div style="font-size:9px;margin:1px 0;">• ' + mName + ' (' + mType + '): ' +
-                  ((mCategory === 'Status') ? '<span style="color:#aaa;">Status</span>' : (mult + '×')) + '</div>';
-        }
-      }
-
-      if (isDead) {
-        html += '<div style="color:#ff5555;font-weight:bold;margin-top:3px;">[FAINTED]</div>';
-      } else if (mon.active) {
-        html += '<div style="color:#00ffcc;font-weight:bold;margin-top:3px;">[CURRENTLY IN BATTLE]</div>';
-      }
-    } else {
-      html = '<div>No data available for Slot ' + slot + '</div>';
-    }
-
-    showInspector('🔄 Switch Slot ' + slot + '/6: ' + rawDetails, html, 'switch', slot);
-  }
-
+  // 1 Menu: Opponent Alive Roster Only
   function inspectOpponent(index) {
     index = Number(index) || 1;
     var foeTeam = getFoeTeam();
     if (!foeTeam.length) {
-      showInspector('🎯 Opponent Team', '<div>No opponent team data found.</div>', 'opponent', 1);
+      showInspector('🎯 Opponent Team', '<div>No alive opponent Pokémon revealed yet.</div>', 'opponent', 1, false);
       return;
     }
 
@@ -907,7 +875,7 @@ const INJECTED_BODY = `
     var abilityText = rawAbility || 'Unknown';
 
     var teraLabel = foe.terastallized ? ' <span style="color:#00ffcc;font-weight:bold;">[Tera: ' + (foe.teraType || foe.terastallized) + ']</span>' : '';
-    var statusLabel = (foe.condition && foe.condition.includes('fnt')) ? ' <span style="color:#ff5555;font-weight:bold;">[FNT]</span>' : (foe.active ? ' <span style="color:#00ffcc;font-weight:bold;">[ACTIVE]</span>' : '');
+    var statusLabel = foe.active ? ' <span style="color:#00ffcc;font-weight:bold;">[ACTIVE]</span>' : '';
 
     var moves = getKnownMoves(foe);
 
@@ -936,22 +904,26 @@ const INJECTED_BODY = `
 
     html += renderDefensiveProfile(foeTypes);
 
-    showInspector('🎯 Opponent ' + index + '/' + foeTeam.length + ': ' + cleanName, html, 'opponent', index);
+    showInspector('🎯 Opponent ' + index + '/' + foeTeam.length + ': ' + cleanName, html, 'opponent', index, false);
   }
 
+  // 2 Menu: My Team & Direct Switch Menu (Alive Only, Moves + Effectiveness + Direct Swap)
   function inspectMyTeam(index) {
     index = Number(index) || 1;
-    var myTeam = getMyTeam();
-    if (!myTeam.length) {
-      showInspector('🛡️ My Team Profile', '<div>No team data found.</div>', 'myteam', 1);
+    var aliveTeam = getMyAliveTeam();
+    if (!aliveTeam.length) {
+      showInspector('🛡️ My Team & Switch', '<div>No alive Pokémon available.</div>', 'myteam', 1, false);
       return;
     }
 
-    if (index > myTeam.length) index = 1;
-    if (index < 1) index = myTeam.length;
+    if (index > aliveTeam.length) index = 1;
+    if (index < 1) index = aliveTeam.length;
 
-    var mon = myTeam[index - 1];
-    var rawName = mon ? (mon.details ? mon.details.split(',')[0] : (mon.name || mon.species || ('Slot ' + index))) : ('Slot ' + index);
+    var item = aliveTeam[index - 1];
+    var mon = item.mon;
+    var slot = item.slot;
+
+    var rawName = mon ? (mon.details ? mon.details.split(',')[0] : (mon.name || mon.species || ('Slot ' + slot))) : ('Slot ' + slot);
     var speciesKey = rawName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
     var pDex = (window.BattlePokedex && BattlePokedex[speciesKey]) || (window.Dex && Dex.species ? Dex.species.get(speciesKey) : {});
 
@@ -964,12 +936,14 @@ const INJECTED_BODY = `
     var itemDesc = getItemDesc(mon ? mon.item : '');
     var abilityDesc = getAbilityDesc(mon ? mon.ability : '');
 
-    var isDead = mon && mon.condition && mon.condition.includes('fnt');
-    var statusBadge = isDead ? ' <span style="color:#ff5555;font-weight:bold;">[FNT]</span>' : (mon && mon.active ? ' <span style="color:#00ffcc;font-weight:bold;">[ACTIVE]</span>' : '');
+    var statusBadge = mon.active
+      ? ' <span style="color:#00ffcc;font-weight:bold;">[ACTIVE IN BATTLE]</span>'
+      : ' <span style="color:#ffd700;font-weight:bold;">[BENCH - PRESS CALL/OK TO SWITCH]</span>';
 
     var html = '';
     html += '<div><b>Types:</b> ' + (monTypes.join(' / ') || 'Unknown') + (mon && mon.teraType ? ' [Tera: ' + mon.teraType + ']' : '') + statusBadge + '</div>';
 
+    // Full Stat Matrix (HP, Spe, Atk, Def, SpA, SpD)
     html += '<div style="background:rgba(255,255,255,0.06);padding:2px 4px;border-radius:3px;margin:2px 0;font-size:9px;">' +
             '<b>HP:</b> ' + (mon ? (mon.condition || '—') : '—') + ' &nbsp;|&nbsp; <b>Spe:</b> <span style="color:#00ffcc;font-weight:bold;">' + (s.spe || '—') + '</span><br>' +
             '<b>Atk:</b> ' + (s.atk || '—') + ' | <b>Def:</b> ' + (s.def || '—') + ' | <b>SpA:</b> ' + (s.spa || '—') + ' | <b>SpD:</b> ' + (s.spd || '—') +
@@ -980,9 +954,31 @@ const INJECTED_BODY = `
     html += '<div><b>Ability:</b> ' + (mon && mon.ability ? mon.ability : 'Unknown') + '</div>';
     if (abilityDesc) html += '<div style="color:#aaa;font-size:8.5px;margin-bottom:2px;">↳ ' + abilityDesc + '</div>';
 
+    // Moves & Damage Effectiveness against Active Opponent
+    var foe = getOpponentActive();
+    var foeTypes = getOpponentTypes(foe);
+    var foeName = foe ? (foe.name || foe.species || 'Opponent').replace(/^p[12]:\\s*/i, '') : 'Opponent';
+
+    if (mon.moves && mon.moves.length) {
+      html += '<div style="margin-top:3px;border-top:1px solid #333;padding-top:2px;"><b>Moves vs ' + foeName + ' (' + (foeTypes.join('/') || '—') + '):</b></div>';
+      for (var i = 0; i < mon.moves.length; i++) {
+        var mName = mon.moves[i];
+        var mId = mName.toLowerCase().replace(/[^a-z0-9]/g, '');
+        var mData = (window.BattleMovedex && BattleMovedex[mId]) || (window.Dex && Dex.moves ? Dex.moves.get(mName) : null);
+        var mType = (mData && mData.type) || 'Normal';
+        var mCategory = (mData && mData.category) || '';
+        var mBp = (mData && (mData.basePower || '—')) || '—';
+        var mult = (mCategory === 'Status') ? 1 : getEffectiveness(mType, foeTypes);
+        var effBadge = (mCategory === 'Status') ? '<span class="eff-badge eff-neutral">Status</span>' : formatMultiplierBadge(mult);
+
+        html += '<div style="font-size:9px;margin:2px 0;">• <b>' + mName + '</b> <span style="color:#ffd700;">[' + mType + (mCategory ? ' ' + mCategory[0] : '') + ']</span> (BP: ' + mBp + ') ' + effBadge + '</div>';
+      }
+    }
+
     html += renderDefensiveProfile(monTypes);
 
-    showInspector('🛡️ My Team ' + index + '/' + myTeam.length + ': ' + rawName, html, 'myteam', index);
+    var titlePrefix = mon.active ? '🛡️ [Active] ' : '🔄 [Switch] ';
+    showInspector(titlePrefix + 'Slot ' + slot + ' (' + index + '/' + aliveTeam.length + '): ' + rawName, html, 'myteam', index, mon.active);
   }
 
   function patchShowdown() {
@@ -1125,7 +1121,6 @@ Config.routes.client = ${JSON.stringify(publicHost)};
     const targetBase = isSim ? TARGET_SIM : TARGET_WEB;
     const targetUrl = new URL(url.pathname + url.search, targetBase);
 
-    // Clone headers and forward IP
     const forwardHeaders = new Headers(request.headers);
     forwardHeaders.set("Host", targetUrl.host);
     forwardHeaders.set("Origin", TARGET_WEB);
@@ -1144,17 +1139,14 @@ Config.routes.client = ${JSON.stringify(publicHost)};
       redirect: "manual",
     });
 
-    // Handle Native WebSocket Upgrades automatically via Cloudflare Workers fetch
     const response = await fetch(proxyRequest);
 
-    // If WebSocket upgrade response (101), return directly
     if (response.status === 101) {
       return response;
     }
 
     const resHeaders = sanitizeResponseHeaders(response.headers);
 
-    // Rewrite redirects pointing to play.pokemonshowdown.com
     const location = resHeaders.get("location");
     if (location && publicHost) {
       resHeaders.set(
@@ -1165,7 +1157,6 @@ Config.routes.client = ${JSON.stringify(publicHost)};
       );
     }
 
-    // Rewrite cookies to drop domain restrictions
     const setCookie = resHeaders.get("set-cookie");
     if (setCookie) {
       resHeaders.set("set-cookie", setCookie.replace(/;\s*Domain=[^;]+/gi, ""));
@@ -1196,7 +1187,6 @@ Config.routes.client = ${JSON.stringify(publicHost)};
       });
     }
 
-    // 5. Pass through static files and API responses directly
     return new Response(response.body, {
       status: response.status,
       statusText: response.statusText,
