@@ -93,7 +93,7 @@ const INJECTED_BODY = `
     window.localStorage.setItem('showdown_crossteams', 'false');
   } catch (e) {}
 
-  var activeInspectType = null; // 'move' | 'opponent' | 'myteam'
+  var activeInspectType = null; // 'move' | 'opponent' | 'myteam' | 'guide'
   var activeInspectIndex = 1;
   var chatSyncTimer = null;
 
@@ -221,6 +221,8 @@ const INJECTED_BODY = `
         } else {
           footEl.innerHTML = '[CALL/OK] Switch In | [◄►] Cycle | [▲▼] Scroll | [#] Close';
         }
+      } else if (type === 'guide') {
+        footEl.innerHTML = '[▲▼] Scroll Guide | [#] Close';
       }
     }
 
@@ -742,6 +744,18 @@ const INJECTED_BODY = `
       return;
     }
 
+    // --- 3 -> CONTROL GUIDE MODAL ---
+    if (key === '3' || code === 51 || eventCode === 'Digit3' || eventCode === 'Numpad3') {
+      if (activeInspectType === 'guide') {
+        hideInspector();
+      } else {
+        inspectGuide();
+      }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
+
     // --- 9 -> TOGGLE FLOATING CHAT & LOG MODAL ---
     if (key === '9' || code === 57 || eventCode === 'Digit9' || eventCode === 'Numpad9') {
       toggleChatModal();
@@ -979,6 +993,25 @@ const INJECTED_BODY = `
 
     var titlePrefix = mon.active ? '🛡️ [Active] ' : '🔄 [Switch] ';
     showInspector(titlePrefix + 'Slot ' + slot + ' (' + index + '/' + aliveTeam.length + '): ' + rawName, html, 'myteam', index, mon.active);
+  }
+
+  // 3 Menu: Quick In-Battle Controls Guide
+  function inspectGuide() {
+    var html = '';
+    html += '<div style="font-weight:bold;color:#00ffcc;margin-bottom:3px;">Keypad Controls:</div>';
+    html += '<div style="margin:2px 0;"><b>[0]</b> Move Selection HUD</div>';
+    html += '<div style="margin:2px 0;"><b>[1]</b> Opponent Roster (Alive Only)</div>';
+    html += '<div style="margin:2px 0;"><b>[2]</b> My Team & Switch (Alive Only)</div>';
+    html += '<div style="margin:2px 0;"><b>[3]</b> Controls Guide (This Menu)</div>';
+    html += '<div style="margin:2px 0;"><b>[9]</b> Battle Chat & Log Overlay</div>';
+    html += '<div style="margin:2px 0;"><b>[*]</b> Toggle Tera / Mega / Dynamax</div>';
+    html += '<div style="margin:2px 0;"><b>[#]</b> Cancel / Undo Move / Close Modal</div>';
+    html += '<div style="margin:2px 0;"><b>[CALL / OK]</b> Use Move / Confirm Switch</div>';
+    html += '<div style="border-top:1px solid #333;margin-top:4px;padding-top:3px;font-weight:bold;color:#00ffcc;">D-Pad Navigation:</div>';
+    html += '<div style="margin:2px 0;"><b>[◄ / ►]</b> Cycle Entries (Moves, Foe, Team)</div>';
+    html += '<div style="margin:2px 0;"><b>[▲ / ▼]</b> Scroll Modal Body</div>';
+    html += '<div style="margin:2px 0;"><b>[D-Pad]</b> Move Spatial Focus in Normal UI</div>';
+    showInspector('📖 Battle Controls Guide', html, 'guide', 1, false);
   }
 
   function patchShowdown() {
