@@ -1,102 +1,9 @@
-import express from "express";
-import http from "http";
-import httpProxy from "http-proxy";
-import zlib from "zlib";
-
-const app = express();
-app.set("trust proxy", 1);
-
 const TARGET_WEB = "https://play.pokemonshowdown.com";
 const TARGET_SIM = "https://sim3.psim.us";
 
-const webProxy = httpProxy.createProxyServer({
-  target: TARGET_WEB,
-  changeOrigin: true,
-  secure: true,
-  selfHandleResponse: true,
-});
+const AD_TRACKER_PATTERN = /(analytics\.js|gtag\/js|ga\.js|ad-manager\.js|pubads.*\.js|adx-floors\.js|afihbs\.js)/i;
 
-const simProxy = httpProxy.createProxyServer({
-  target: TARGET_SIM,
-  changeOrigin: true,
-  secure: true,
-  ws: true,
-});
-
-function forwardClientIp(proxyReq, req) {
-  const clientIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
-  if (clientIp) {
-    proxyReq.setHeader("x-forwarded-for", clientIp);
-    proxyReq.setHeader("x-real-ip", clientIp.split(",")[0].trim());
-  }
-}
-
-webProxy.on("proxyReq", (proxyReq, req) => {
-  forwardClientIp(proxyReq, req);
-});
-
-simProxy.on("proxyReqWs", (proxyReq, req) => {
-  forwardClientIp(proxyReq, req);
-});
-
-function sanitizeHeaders(proxyRes) {
-  delete proxyRes.headers["content-security-policy"];
-  delete proxyRes.headers["content-security-policy-report-only"];
-  delete proxyRes.headers["x-frame-options"];
-  delete proxyRes.headers["cross-origin-opener-policy"];
-  delete proxyRes.headers["cross-origin-embedder-policy"];
-  proxyRes.headers["access-control-allow-origin"] = "*";
-  proxyRes.headers["access-control-allow-credentials"] = "true";
-
-  const setCookie = proxyRes.headers["set-cookie"];
-  if (setCookie) {
-    proxyRes.headers["set-cookie"] = (
-      Array.isArray(setCookie) ? setCookie : [setCookie]
-    ).map((cookie) => cookie.replace(/;\s*Domain=[^;]+/i, ""));
-  }
-}
-
-function decompressBuffer(buffer, encoding) {
-  if (!buffer || buffer.length === 0) return buffer;
-  try {
-    if (encoding === "gzip" || encoding === "deflate") {
-      return zlib.unzipSync(buffer);
-    } else if (encoding === "br") {
-      return zlib.brotliDecompressSync(buffer);
-    }
-  } catch (e) {
-    return buffer;
-  }
-  return buffer;
-}
-
-webProxy.on("proxyRes", sanitizeHeaders);
-
-webProxy.on("proxyRes", (proxyRes, req, res) => {
-  const publicHost = req.headers.host || "";
-  const location = proxyRes.headers["location"];
-  if (location && publicHost) {
-    proxyRes.headers["location"] = location
-      .replace("https://play.pokemonshowdown.com", `https://${publicHost}`)
-      .replace("http://play.pokemonshowdown.com", `https://${publicHost}`);
-  }
-
-  const chunks = [];
-  proxyRes.on("data", (chunk) => chunks.push(chunk));
-  proxyRes.on("end", () => {
-    let body = Buffer.concat(chunks);
-    const contentType = proxyRes.headers["content-type"] || "";
-    const contentEncoding = proxyRes.headers["content-encoding"];
-
-    if (contentType.includes("text/html")) {
-      body = decompressBuffer(body, contentEncoding);
-      delete proxyRes.headers["content-encoding"];
-
-      let text = body.toString("utf8");
-      text = text.split("//play.pokemonshowdown.com/config/config.js")
-                 .join(`//${publicHost}/config/config.js`);
-
-      const injectedHead = `
+const INJECTED_HEAD = `
 <style>
   /* 1. Suppression of Native Hover Tooltips */
   #tooltipwrapper,
@@ -179,14 +86,14 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 </style>
 `;
 
-      const injectedBody = `
+const INJECTED_BODY = `
 <script>
 (function() {
   try {
     window.localStorage.setItem('showdown_crossteams', 'false');
   } catch (e) {}
 
-  var activeInspectType = null; // 'move' | 'switch' | 'opponent' | 'myteam'
+  var activeInspectType = null; // 'move' | 'opponent' | 'myteam'
   var activeInspectIndex = 1;
   var chatSyncTimer = null;
 
@@ -262,6 +169,15 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     return html;
   }
 
+  function isMonAlive(p) {
+    if (!p) return false;
+    if (p.fainted) return false;
+    if (p.status === 'fnt') return false;
+    if (p.condition && (p.condition.includes('fnt') || p.condition === '0 fnt')) return false;
+    if (p.hp !== undefined && p.maxhp && p.hp === 0) return false;
+    return true;
+  }
+
   function getInspectorEl() {
     var el = document.getElementById('cp-inspector');
     if (!el) {
@@ -282,7 +198,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     activeInspectType = null;
   }
 
-  function showInspector(title, bodyHtml, type, index) {
+  function showInspector(title, bodyHtml, type, index, isSelfActive) {
     hideChatModal();
     var el = getInspectorEl();
     var titleEl = document.getElementById('cp-insp-title');
@@ -295,12 +211,16 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       bodyEl.scrollTop = 0;
     }
     if (footEl) {
-      if (type === 'move' || type === 'switch') {
-        footEl.innerHTML = '[CALL] Use | [◄►] Cycle | [▲▼] Move ↔ Switch | [#] Close';
+      if (type === 'move') {
+        footEl.innerHTML = '[CALL/OK] Use Move | [◄►] Cycle Moves | [▲▼] Scroll | [#] Cancel';
       } else if (type === 'opponent') {
         footEl.innerHTML = '[◄►] Cycle Foe | [▲▼] Scroll | [#] Close';
       } else if (type === 'myteam') {
-        footEl.innerHTML = '[◄►] Cycle Team | [▲▼] Scroll | [#] Close';
+        if (isSelfActive) {
+          footEl.innerHTML = '<span style="color:#ffcc00;">[CURRENTLY IN BATTLE]</span> | [◄►] Cycle | [▲▼] Scroll | [#] Close';
+        } else {
+          footEl.innerHTML = '[CALL/OK] Switch In | [◄►] Cycle | [▲▼] Scroll | [#] Close';
+        }
       }
     }
 
@@ -432,19 +352,59 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     return null;
   }
 
-  function getValidSwitchSlots() {
-    var req = getBattleRequest();
-    var valid = [];
-    if (req && req.side && req.side.pokemon) {
-      for (var i = 0; i < req.side.pokemon.length; i++) {
-        var p = req.side.pokemon[i];
-        var isDead = p.condition && p.condition.includes('fnt');
-        if (!p.active && !isDead) {
-          valid.push(i + 1);
+  function cancelSelectedMove() {
+    var undoBtn = document.querySelector('button[name="undo"], button[name="clearMove"], button[name="chooseUndo"], button[value="undo"], button[value="cancel"]');
+    if (undoBtn) {
+      undoBtn.click();
+      return true;
+    }
+    var room = getBattleRoom();
+    if (room) {
+      if (typeof room.undo === 'function') {
+        room.undo();
+        return true;
+      }
+      if (typeof room.send === 'function') {
+        room.send('/undo');
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function executeSwitch(mon, slot) {
+    var monSpecies = mon ? (mon.details ? mon.details.split(',')[0].trim().toLowerCase() : (mon.name || mon.species || '').trim().toLowerCase()) : '';
+    var switchBtns = document.querySelectorAll('button[name="chooseSwitch"], button.switchselect');
+    var targetBtn = null;
+
+    for (var s = 0; s < switchBtns.length; s++) {
+      var btnText = switchBtns[s].innerText.toLowerCase();
+      if (monSpecies && btnText.includes(monSpecies)) {
+        targetBtn = switchBtns[s];
+        break;
+      }
+    }
+
+    if (!targetBtn) {
+      for (var s = 0; s < switchBtns.length; s++) {
+        var btnVal = parseInt(switchBtns[s].value, 10);
+        if (btnVal === slot || btnVal === (slot - 1)) {
+          targetBtn = switchBtns[s];
+          break;
         }
       }
     }
-    return valid.length > 0 ? valid : [1];
+
+    if (targetBtn) {
+      targetBtn.click();
+    } else {
+      var room = getBattleRoom();
+      if (room && typeof room.choose === 'function') {
+        room.choose('switch', slot);
+      } else if (room && typeof room.send === 'function') {
+        room.send('/choose switch ' + slot);
+      }
+    }
   }
 
   function getOpponentActive() {
@@ -472,6 +432,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     return null;
   }
 
+  // Key 1: Only alive opponent Pokémon
   function getFoeTeam() {
     var room = getBattleRoom();
     if (!room || !room.battle) return [];
@@ -481,12 +442,12 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
     var active = (foeSide.active && foeSide.active[0]) ? foeSide.active[0] : getOpponentActive();
     var list = [];
-    if (active) list.push(active);
+    if (active && isMonAlive(active)) list.push(active);
 
     if (foeSide.pokemon && foeSide.pokemon.length) {
       for (var i = 0; i < foeSide.pokemon.length; i++) {
         var p = foeSide.pokemon[i];
-        if (p && p !== active && list.indexOf(p) === -1) {
+        if (p && p !== active && list.indexOf(p) === -1 && isMonAlive(p)) {
           list.push(p);
         }
       }
@@ -494,18 +455,33 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     return list;
   }
 
-  function getMyTeam() {
+  // Key 2: Only alive teammates (Active + Bench)
+  function getMyAliveTeam() {
     var req = getBattleRequest();
+    var list = [];
     if (req && req.side && req.side.pokemon && req.side.pokemon.length) {
-      return req.side.pokemon;
+      for (var i = 0; i < req.side.pokemon.length; i++) {
+        var p = req.side.pokemon[i];
+        if (isMonAlive(p)) {
+          list.push({ mon: p, slot: i + 1 });
+        }
+      }
+      return list;
     }
     var room = getBattleRoom();
     if (room && room.battle) {
       var b = room.battle;
       var mySide = b.yourSide || (b.sides && (b.mySide && b.mySide.n !== undefined ? b.sides[b.mySide.n] : b.sides[0])) || b.mySide;
-      if (mySide && mySide.pokemon) return mySide.pokemon;
+      if (mySide && mySide.pokemon) {
+        for (var j = 0; j < mySide.pokemon.length; j++) {
+          var mon = mySide.pokemon[j];
+          if (isMonAlive(mon)) {
+            list.push({ mon: mon, slot: j + 1 });
+          }
+        }
+      }
     }
-    return [];
+    return list;
   }
 
   function getOpponentTypes(customFoe) {
@@ -572,7 +548,8 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
     var isCall = (key === 'Call' || code === 0 || code === 170);
     var isEnter = (key === 'Enter' || code === 13);
-    var isHashOrEscape = (key === '#' || key === 'Hash' || key === 'Pound' || key === 'Escape' || code === 27);
+    var isHash = (key === '#' || key === 'Hash' || key === 'Pound' || code === 192);
+    var isEscape = (key === 'Escape' || code === 27);
 
     if (isCall) {
       e.preventDefault();
@@ -594,7 +571,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
           e.stopImmediatePropagation();
           return;
         }
-        if (isHashOrEscape) {
+        if (isHash || isEscape) {
           chatInput.blur();
           hideChatModal();
           e.preventDefault();
@@ -622,7 +599,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
         e.stopImmediatePropagation();
         return;
       }
-      if (isHashOrEscape || key === '9' || code === 57 || eventCode === 'Digit9' || eventCode === 'Numpad9') {
+      if (isHash || isEscape || key === '9' || code === 57 || eventCode === 'Digit9' || eventCode === 'Numpad9') {
         hideChatModal();
         e.preventDefault();
         e.stopImmediatePropagation();
@@ -635,7 +612,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     var isLeft = (key === 'ArrowLeft' || code === 37);
     var isRight = (key === 'ArrowRight' || code === 39);
 
-    // --- INSPECTOR DPAD INTERACTION ---
+    // --- INSPECTOR DPAD INTERACTION (◄►: Cycle | ▲▼: Scroll) ---
     if (activeInspectType && (isLeft || isRight || isUp || isDown)) {
       if (isLeft || isRight) {
         var delta = isRight ? 1 : -1;
@@ -644,40 +621,27 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
           if (nextMove > 4) nextMove = 1;
           if (nextMove < 1) nextMove = 4;
           inspectMove(nextMove);
-        } else if (activeInspectType === 'switch') {
-          var validSlots = getValidSwitchSlots();
-          var curIdx = validSlots.indexOf(activeInspectIndex);
-          if (curIdx === -1) curIdx = 0;
-          var nextIdx = curIdx + delta;
-          if (nextIdx >= validSlots.length) nextIdx = 0;
-          if (nextIdx < 0) nextIdx = validSlots.length - 1;
-          inspectPokemon(validSlots[nextIdx]);
         } else if (activeInspectType === 'opponent') {
           var foeTeam = getFoeTeam();
-          var nextFoe = activeInspectIndex + delta;
-          if (nextFoe > foeTeam.length) nextFoe = 1;
-          if (nextFoe < 1) nextFoe = foeTeam.length;
-          inspectOpponent(nextFoe);
+          if (foeTeam.length > 0) {
+            var nextFoe = activeInspectIndex + delta;
+            if (nextFoe > foeTeam.length) nextFoe = 1;
+            if (nextFoe < 1) nextFoe = foeTeam.length;
+            inspectOpponent(nextFoe);
+          }
         } else if (activeInspectType === 'myteam') {
-          var myTeam = getMyTeam();
-          var nextMon = activeInspectIndex + delta;
-          if (nextMon > myTeam.length) nextMon = 1;
-          if (nextMon < 1) nextMon = myTeam.length;
-          inspectMyTeam(nextMon);
+          var aliveTeam = getMyAliveTeam();
+          if (aliveTeam.length > 0) {
+            var nextMon = activeInspectIndex + delta;
+            if (nextMon > aliveTeam.length) nextMon = 1;
+            if (nextMon < 1) nextMon = aliveTeam.length;
+            inspectMyTeam(nextMon);
+          }
         }
       } else if (isUp || isDown) {
-        // In 0 menu: D-Pad Up/Down toggles between Move and Switch inspection
-        if (activeInspectType === 'move') {
-          var switchSlots = getValidSwitchSlots();
-          inspectPokemon(switchSlots[0] || 1);
-        } else if (activeInspectType === 'switch') {
-          inspectMove(1);
-        } else if (activeInspectType === 'opponent' || activeInspectType === 'myteam') {
-          // In 1 & 2 menus: D-Pad Up/Down scrolls the detailed text/moves info
-          var bodyEl = document.getElementById('cp-insp-body');
-          if (bodyEl) {
-            bodyEl.scrollTop += isDown ? 35 : -35;
-          }
+        var bodyEl = document.getElementById('cp-insp-body');
+        if (bodyEl) {
+          bodyEl.scrollTop += isDown ? 35 : -35;
         }
       }
       e.preventDefault();
@@ -689,7 +653,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       e.stopImmediatePropagation();
     }
 
-    // --- CALL / ENTER -> EXECUTE ACTION ---
+    // --- CALL / ENTER -> EXECUTE ACTION (Move or Switch) ---
     if (isCall || isEnter) {
       if (activeInspectType === 'move') {
         var moveBtn = document.querySelector('button[name="chooseMove"][value="' + activeInspectIndex + '"]') ||
@@ -699,89 +663,52 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
         e.preventDefault();
         e.stopImmediatePropagation();
         return;
-      } else if (activeInspectType === 'switch') {
-        var req = getBattleRequest();
-        var mon = req && req.side && req.side.pokemon && req.side.pokemon[activeInspectIndex - 1];
-
-        if (mon && mon.condition && mon.condition.includes('fnt')) {
-          hideInspector();
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          return;
-        }
-
-        var monSpecies = mon ? mon.details.split(',')[0].trim().toLowerCase() : '';
-        var switchBtns = document.querySelectorAll('button[name="chooseSwitch"], button.switchselect');
-        var targetBtn = null;
-
-        for (var s = 0; s < switchBtns.length; s++) {
-          var btnText = switchBtns[s].innerText.toLowerCase();
-          if (monSpecies && btnText.includes(monSpecies)) {
-            targetBtn = switchBtns[s];
-            break;
+      } else if (activeInspectType === 'myteam') {
+        var aliveTeam = getMyAliveTeam();
+        var target = aliveTeam[activeInspectIndex - 1];
+        if (target && target.mon) {
+          if (!target.mon.active) {
+            executeSwitch(target.mon, target.slot);
+            hideInspector();
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            return;
           }
         }
-
-        if (!targetBtn) {
-          for (var s = 0; s < switchBtns.length; s++) {
-            var btnVal = parseInt(switchBtns[s].value, 10);
-            if (btnVal === activeInspectIndex || btnVal === (activeInspectIndex - 1)) {
-              targetBtn = switchBtns[s];
-              break;
-            }
-          }
-        }
-
-        if (targetBtn) {
-          targetBtn.click();
-        } else {
-          var room = getBattleRoom();
-          if (room && typeof room.choose === 'function') {
-            room.choose('switch', activeInspectIndex);
-          } else if (room && typeof room.send === 'function') {
-            room.send('/choose switch ' + activeInspectIndex);
-          }
-        }
-
-        hideInspector();
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        return;
       }
     }
 
-    // --- # / ESCAPE -> CLOSE INSPECTOR OR UNDO ---
-    if (isHashOrEscape) {
+    // --- # -> CANCEL SELECTED MOVE / UNDO ---
+    if (isHash) {
+      cancelSelectedMove();
       if (activeInspectType) {
         hideInspector();
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        return;
-      }
-
-      var undoBtn = document.querySelector('button[name="undo"], button[name="clearMove"], button[name="chooseUndo"], button[value="undo"], button[value="cancel"]');
-      if (undoBtn) {
-        undoBtn.click();
-      } else {
-        var room = getBattleRoom();
-        if (room && typeof room.send === 'function') room.send('/undo');
       }
       e.preventDefault();
       e.stopImmediatePropagation();
       return;
     }
 
-    // --- 0 -> UNIFIED MODAL TOGGLE (MOVES / SWITCHES ONLY) ---
+    // --- ESCAPE -> CLOSE MODAL OR UNDO ---
+    if (isEscape) {
+      if (activeInspectType) {
+        hideInspector();
+      } else {
+        cancelSelectedMove();
+      }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
+
+    // --- 0 -> MOVE SELECTION MODAL ONLY ---
     if (key === '0' || code === 48) {
-      if (activeInspectType === 'move' || activeInspectType === 'switch') {
+      if (activeInspectType === 'move') {
         hideInspector();
       } else {
         var focused = document.activeElement;
         if (focused && focused.name === 'chooseMove') {
           inspectMove(focused.value || '1');
-        } else if (focused && (focused.name === 'chooseSwitch' || focused.classList.contains('switchselect'))) {
-          var validSlots = getValidSwitchSlots();
-          inspectPokemon(validSlots[0] || 1);
         } else {
           inspectMove('1');
         }
@@ -791,7 +718,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       return;
     }
 
-    // --- 1 -> OPPONENT PROFILE & WEAKNESS INSPECTOR ---
+    // --- 1 -> OPPONENT ALIVE ROSTER & WEAKNESSES ---
     if (key === '1' || code === 49) {
       if (activeInspectType === 'opponent') {
         hideInspector();
@@ -803,7 +730,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       return;
     }
 
-    // --- 2 -> MY TEAM DEFENSIVE PROFILE & /DT INSPECTOR ---
+    // --- 2 -> MY TEAM & DIRECT SWITCH MENU (ALIVE MONS ONLY) ---
     if (key === '2' || code === 50 || eventCode === 'Digit2' || eventCode === 'Numpad2') {
       if (activeInspectType === 'myteam') {
         hideInspector();
@@ -823,18 +750,19 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       return;
     }
 
-    // --- * -> TERA / GIMMICK ---
+    // --- * -> TOGGLE TERASTALLIZE / GIMMICK ---
     if (key === '*' || code === 106 || eventCode === 'NumpadMultiply') {
-      var tera = document.querySelector('input[name="terastallize"], input[name="megaEvolution"]');
+      var tera = document.querySelector('input[name="terastallize"], input[name="megaEvolution"], input[name="dynamax"], input[name="zmove"], button[name="terastallize"]');
       if (tera) {
         tera.click();
-        e.preventDefault();
-        e.stopImmediatePropagation();
       }
+      e.preventDefault();
+      e.stopImmediatePropagation();
       return;
     }
   }, true);
 
+  // 0 Menu: Move Selection Only
   function inspectMove(index) {
     index = Number(index) || 1;
     var moveBtn = document.querySelector('button[name="chooseMove"][value="' + index + '"]') ||
@@ -884,71 +812,15 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
       html += '<div style="color:#ff5555;font-weight:bold;margin-top:2px;">[DISABLED]</div>';
     }
 
-    showInspector('⚡ Move ' + index + '/4: ' + moveName, html, 'move', index);
+    showInspector('⚡ Move ' + index + '/4: ' + moveName, html, 'move', index, false);
   }
 
-  function inspectPokemon(slot) {
-    slot = Number(slot) || 1;
-    var req = getBattleRequest();
-    var mon = req && req.side && req.side.pokemon && req.side.pokemon[slot - 1];
-
-    var foeTypes = getOpponentTypes();
-    var foe = getOpponentActive();
-    var foeName = foe ? (foe.name || foe.species || 'Opponent').replace(/^p[12]:\\s*/i, '') : 'Opponent';
-
-    var rawDetails = mon ? mon.details.split(',')[0] : ('Slot ' + slot);
-    var speciesKey = rawDetails.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-    var pDex = (window.BattlePokedex && BattlePokedex[speciesKey]) || (window.Dex && Dex.species ? Dex.species.get(speciesKey) : null);
-
-    var monTypes = (mon && mon.types) || (pDex && pDex.types) || [];
-    var s = (mon && mon.stats) ? mon.stats : ((pDex && pDex.baseStats) ? pDex.baseStats : {});
-
-    var html = '';
-    if (mon) {
-      var isDead = mon.condition && mon.condition.includes('fnt');
-      html += '<div><b>Types:</b> ' + (monTypes.join(' / ') || 'Unknown') + (mon.teraType ? ' [Tera: ' + mon.teraType + ']' : '') + '</div>';
-
-      // Full Stat Matrix (HP, Spe, Atk, Def, SpA, SpD)
-      html += '<div style="background:rgba(255,255,255,0.06);padding:2px 4px;border-radius:3px;margin:2px 0;font-size:9px;">' +
-              '<b>HP:</b> ' + (mon.condition || '—') + ' &nbsp;|&nbsp; <b>Spe:</b> <span style="color:#00ffcc;font-weight:bold;">' + (s.spe || '—') + '</span><br>' +
-              '<b>Atk:</b> ' + (s.atk || '—') + ' | <b>Def:</b> ' + (s.def || '—') + ' | <b>SpA:</b> ' + (s.spa || '—') + ' | <b>SpD:</b> ' + (s.spd || '—') +
-              '</div>';
-
-      if (mon.item) html += '<div><b>Item:</b> ' + mon.item + '</div>';
-      if (mon.ability) html += '<div><b>Ability:</b> ' + mon.ability + '</div>';
-
-      if (mon.moves && mon.moves.length && !isDead) {
-        html += '<div style="margin-top:3px;border-top:1px solid #333;padding-top:2px;"><b>Bench Moves vs ' + foeName + ':</b></div>';
-        for (var i = 0; i < mon.moves.length; i++) {
-          var mName = mon.moves[i];
-          var mId = mName.toLowerCase().replace(/[^a-z0-9]/g, '');
-          var mData = (window.BattleMovedex && BattleMovedex[mId]) || (window.Dex && Dex.moves ? Dex.moves.get(mName) : null);
-          var mType = (mData && mData.type) || 'Normal';
-          var mCategory = (mData && mData.category) || '';
-          var mult = (mCategory === 'Status') ? 1 : getEffectiveness(mType, foeTypes);
-
-          html += '<div style="font-size:9px;margin:1px 0;">• ' + mName + ' (' + mType + '): ' +
-                  ((mCategory === 'Status') ? '<span style="color:#aaa;">Status</span>' : (mult + '×')) + '</div>';
-        }
-      }
-
-      if (isDead) {
-        html += '<div style="color:#ff5555;font-weight:bold;margin-top:3px;">[FAINTED]</div>';
-      } else if (mon.active) {
-        html += '<div style="color:#00ffcc;font-weight:bold;margin-top:3px;">[CURRENTLY IN BATTLE]</div>';
-      }
-    } else {
-      html = '<div>No data available for Slot ' + slot + '</div>';
-    }
-
-    showInspector('🔄 Switch Slot ' + slot + '/6: ' + rawDetails, html, 'switch', slot);
-  }
-
+  // 1 Menu: Opponent Alive Roster Only
   function inspectOpponent(index) {
     index = Number(index) || 1;
     var foeTeam = getFoeTeam();
     if (!foeTeam.length) {
-      showInspector('🎯 Opponent Team', '<div>No opponent team data found.</div>', 'opponent', 1);
+      showInspector('🎯 Opponent Team', '<div>No alive opponent Pokémon revealed yet.</div>', 'opponent', 1, false);
       return;
     }
 
@@ -1003,7 +875,7 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     var abilityText = rawAbility || 'Unknown';
 
     var teraLabel = foe.terastallized ? ' <span style="color:#00ffcc;font-weight:bold;">[Tera: ' + (foe.teraType || foe.terastallized) + ']</span>' : '';
-    var statusLabel = (foe.condition && foe.condition.includes('fnt')) ? ' <span style="color:#ff5555;font-weight:bold;">[FNT]</span>' : (foe.active ? ' <span style="color:#00ffcc;font-weight:bold;">[ACTIVE]</span>' : '');
+    var statusLabel = foe.active ? ' <span style="color:#00ffcc;font-weight:bold;">[ACTIVE]</span>' : '';
 
     var moves = getKnownMoves(foe);
 
@@ -1032,22 +904,26 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
 
     html += renderDefensiveProfile(foeTypes);
 
-    showInspector('🎯 Opponent ' + index + '/' + foeTeam.length + ': ' + cleanName, html, 'opponent', index);
+    showInspector('🎯 Opponent ' + index + '/' + foeTeam.length + ': ' + cleanName, html, 'opponent', index, false);
   }
 
+  // 2 Menu: My Team & Direct Switch Menu (Alive Only, Moves + Effectiveness + Direct Swap)
   function inspectMyTeam(index) {
     index = Number(index) || 1;
-    var myTeam = getMyTeam();
-    if (!myTeam.length) {
-      showInspector('🛡️ My Team Profile', '<div>No team data found.</div>', 'myteam', 1);
+    var aliveTeam = getMyAliveTeam();
+    if (!aliveTeam.length) {
+      showInspector('🛡️ My Team & Switch', '<div>No alive Pokémon available.</div>', 'myteam', 1, false);
       return;
     }
 
-    if (index > myTeam.length) index = 1;
-    if (index < 1) index = myTeam.length;
+    if (index > aliveTeam.length) index = 1;
+    if (index < 1) index = aliveTeam.length;
 
-    var mon = myTeam[index - 1];
-    var rawName = mon ? (mon.details ? mon.details.split(',')[0] : (mon.name || mon.species || ('Slot ' + index))) : ('Slot ' + index);
+    var item = aliveTeam[index - 1];
+    var mon = item.mon;
+    var slot = item.slot;
+
+    var rawName = mon ? (mon.details ? mon.details.split(',')[0] : (mon.name || mon.species || ('Slot ' + slot))) : ('Slot ' + slot);
     var speciesKey = rawName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
     var pDex = (window.BattlePokedex && BattlePokedex[speciesKey]) || (window.Dex && Dex.species ? Dex.species.get(speciesKey) : {});
 
@@ -1060,8 +936,9 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     var itemDesc = getItemDesc(mon ? mon.item : '');
     var abilityDesc = getAbilityDesc(mon ? mon.ability : '');
 
-    var isDead = mon && mon.condition && mon.condition.includes('fnt');
-    var statusBadge = isDead ? ' <span style="color:#ff5555;font-weight:bold;">[FNT]</span>' : (mon && mon.active ? ' <span style="color:#00ffcc;font-weight:bold;">[ACTIVE]</span>' : '');
+    var statusBadge = mon.active
+      ? ' <span style="color:#00ffcc;font-weight:bold;">[ACTIVE IN BATTLE]</span>'
+      : ' <span style="color:#ffd700;font-weight:bold;">[BENCH - PRESS CALL/OK TO SWITCH]</span>';
 
     var html = '';
     html += '<div><b>Types:</b> ' + (monTypes.join(' / ') || 'Unknown') + (mon && mon.teraType ? ' [Tera: ' + mon.teraType + ']' : '') + statusBadge + '</div>';
@@ -1077,9 +954,31 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     html += '<div><b>Ability:</b> ' + (mon && mon.ability ? mon.ability : 'Unknown') + '</div>';
     if (abilityDesc) html += '<div style="color:#aaa;font-size:8.5px;margin-bottom:2px;">↳ ' + abilityDesc + '</div>';
 
+    // Moves & Damage Effectiveness against Active Opponent
+    var foe = getOpponentActive();
+    var foeTypes = getOpponentTypes(foe);
+    var foeName = foe ? (foe.name || foe.species || 'Opponent').replace(/^p[12]:\\s*/i, '') : 'Opponent';
+
+    if (mon.moves && mon.moves.length) {
+      html += '<div style="margin-top:3px;border-top:1px solid #333;padding-top:2px;"><b>Moves vs ' + foeName + ' (' + (foeTypes.join('/') || '—') + '):</b></div>';
+      for (var i = 0; i < mon.moves.length; i++) {
+        var mName = mon.moves[i];
+        var mId = mName.toLowerCase().replace(/[^a-z0-9]/g, '');
+        var mData = (window.BattleMovedex && BattleMovedex[mId]) || (window.Dex && Dex.moves ? Dex.moves.get(mName) : null);
+        var mType = (mData && mData.type) || 'Normal';
+        var mCategory = (mData && mData.category) || '';
+        var mBp = (mData && (mData.basePower || '—')) || '—';
+        var mult = (mCategory === 'Status') ? 1 : getEffectiveness(mType, foeTypes);
+        var effBadge = (mCategory === 'Status') ? '<span class="eff-badge eff-neutral">Status</span>' : formatMultiplierBadge(mult);
+
+        html += '<div style="font-size:9px;margin:2px 0;">• <b>' + mName + '</b> <span style="color:#ffd700;">[' + mType + (mCategory ? ' ' + mCategory[0] : '') + ']</span> (BP: ' + mBp + ') ' + effBadge + '</div>';
+      }
+    }
+
     html += renderDefensiveProfile(monTypes);
 
-    showInspector('🛡️ My Team ' + index + '/' + myTeam.length + ': ' + rawName, html, 'myteam', index);
+    var titlePrefix = mon.active ? '🛡️ [Active] ' : '🔄 [Switch] ';
+    showInspector(titlePrefix + 'Slot ' + slot + ' (' + index + '/' + aliveTeam.length + '): ' + rawName, html, 'myteam', index, mon.active);
   }
 
   function patchShowdown() {
@@ -1144,61 +1043,51 @@ webProxy.on("proxyRes", (proxyRes, req, res) => {
     setTimeout(attemptConnect, 100);
   });
 })();
-</script>`;
+</script>
+`;
 
-      text = text.replace("<head>", `<head>${injectedHead}`);
-      text = text.includes("</body>")
-        ? text.replace("</body>", `${injectedBody}</body>`)
-        : text + injectedBody;
+function sanitizeResponseHeaders(originalHeaders) {
+  const headers = new Headers(originalHeaders);
+  headers.delete("content-security-policy");
+  headers.delete("content-security-policy-report-only");
+  headers.delete("x-frame-options");
+  headers.delete("cross-origin-opener-policy");
+  headers.delete("cross-origin-embedder-policy");
+  headers.set("access-control-allow-origin", "*");
+  headers.set("access-control-allow-credentials", "true");
+  return headers;
+}
 
-      body = Buffer.from(text, "utf8");
-      proxyRes.headers["content-length"] = Buffer.byteLength(body);
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    const publicHost = request.headers.get("host") || url.host;
+
+    // 1. Short-circuit ad and analytics networks
+    if (AD_TRACKER_PATTERN.test(url.pathname)) {
+      return new Response("// Ad/Analytics disabled by proxy", {
+        status: 200,
+        headers: {
+          "Content-Type": "application/javascript; charset=utf-8",
+          "Cache-Control": "public, max-age=86400",
+        },
+      });
     }
 
-    res.writeHead(proxyRes.statusCode, proxyRes.headers);
-    res.end(body);
-  });
-});
+    // 2. Intercept /config/config.js
+    if (url.pathname === "/config/config.js") {
+      try {
+        const upstreamReq = new Request(`${TARGET_WEB}/config/config.js`, {
+          headers: {
+            "User-Agent": request.headers.get("user-agent") || "Mozilla/5.0",
+            Referer: `${TARGET_WEB}/`,
+            Origin: TARGET_WEB,
+          },
+        });
+        const resp = await fetch(upstreamReq);
+        let configText = await resp.text();
 
-webProxy.on("error", (err, req, res) => {
-  if (res && res.writeHead && !res.headersSent) {
-    res.writeHead(502, { "Content-Type": "text/plain" });
-    res.end("Web proxy connection error.");
-  }
-});
-
-simProxy.on("error", (err, req, socket) => {
-  if (socket && socket.destroy) socket.destroy();
-});
-
-app.get([
-  /(analytics\.js|gtag\/js|ga\.js)/,
-  /ad-manager\.js/,
-  /pubads.*\.js/,
-  /adx-floors\.js/,
-  /afihbs\.js/,
-], (req, res) => {
-  res.setHeader("Content-Type", "application/javascript; charset=utf-8");
-  res.setHeader("Cache-Control", "public, max-age=86400");
-  return res.send("// Ad/Analytics disabled by proxy");
-});
-
-app.get("/config/config.js", async (req, res) => {
-  try {
-    const fetchOptions = {
-      headers: {
-        "User-Agent": req.headers["user-agent"] || "Mozilla/5.0",
-        Referer: `${TARGET_WEB}/`,
-        Origin: TARGET_WEB,
-        "Accept-Encoding": "identity",
-      },
-    };
-
-    const response = await fetch(`${TARGET_WEB}/config/config.js`, fetchOptions);
-    let text = await response.text();
-    const currentHost = req.headers.host || "localhost";
-
-    text += `
+        configText += `
 Config.server = Config.defaultserver = {
   id: 'showdown',
   host: 'sim3.psim.us',
@@ -1208,58 +1097,100 @@ Config.server = Config.defaultserver = {
   ssl: true
 };
 Config.routes = Config.routes || {};
-Config.routes.client = ${JSON.stringify(currentHost)};
+Config.routes.client = ${JSON.stringify(publicHost)};
 `;
 
-    res.setHeader("Content-Type", "application/javascript; charset=utf-8");
-    res.setHeader("Cache-Control", "no-store");
-    return res.send(text);
-  } catch (err) {
-    return res.status(500).send(`// Config proxy error: ${err.message}`);
-  }
-});
+        return new Response(configText, {
+          status: 200,
+          headers: {
+            "Content-Type": "application/javascript; charset=utf-8",
+            "Cache-Control": "no-store",
+            "Access-Control-Allow-Origin": "*",
+          },
+        });
+      } catch (err) {
+        return new Response(`// Config proxy error: ${err.message}`, {
+          status: 500,
+          headers: { "Content-Type": "application/javascript; charset=utf-8" },
+        });
+      }
+    }
 
-app.use((req, res) => {
-  if (req.url.startsWith("/showdown")) {
-    simProxy.web(req, res, {
-      headers: {
-        Host: "sim3.psim.us",
-        Origin: TARGET_WEB,
-        Referer: `${TARGET_WEB}/`,
-      },
-    });
-  } else {
-    webProxy.web(req, res, {
-      headers: {
-        Host: "play.pokemonshowdown.com",
-        Origin: TARGET_WEB,
-        Referer: `${TARGET_WEB}/`,
-      },
-    });
-  }
-});
+    // 3. Dispatch Target: Simulator (/showdown) or Web Client
+    const isSim = url.pathname.startsWith("/showdown");
+    const targetBase = isSim ? TARGET_SIM : TARGET_WEB;
+    const targetUrl = new URL(url.pathname + url.search, targetBase);
 
-const server = http.createServer(app);
+    const forwardHeaders = new Headers(request.headers);
+    forwardHeaders.set("Host", targetUrl.host);
+    forwardHeaders.set("Origin", TARGET_WEB);
+    forwardHeaders.set("Referer", `${TARGET_WEB}/`);
 
-server.on("upgrade", (req, socket, head) => {
-  if (req.url.startsWith("/showdown")) {
-    simProxy.ws(req, socket, head, {
-      headers: {
-        Host: "sim3.psim.us",
-        Origin: TARGET_WEB,
-      },
-    });
-  } else {
-    webProxy.ws(req, socket, head, {
-      headers: {
-        Host: "play.pokemonshowdown.com",
-        Origin: TARGET_WEB,
-      },
-    });
-  }
-});
+    const clientIp = request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for");
+    if (clientIp) {
+      forwardHeaders.set("x-forwarded-for", clientIp);
+      forwardHeaders.set("x-real-ip", clientIp.split(",")[0].trim());
+    }
 
-const PORT = Number(process.env.PORT || 3000);
-server.listen(PORT, () => {
-  console.log(`Showdown proxy active on port ${PORT}`);
-});
+    const proxyRequest = new Request(targetUrl.toString(), {
+      method: request.method,
+      headers: forwardHeaders,
+      body: request.body,
+      redirect: "manual",
+    });
+
+    const response = await fetch(proxyRequest);
+
+    if (response.status === 101) {
+      return response;
+    }
+
+    const resHeaders = sanitizeResponseHeaders(response.headers);
+
+    const location = resHeaders.get("location");
+    if (location && publicHost) {
+      resHeaders.set(
+        "location",
+        location
+          .replace("https://play.pokemonshowdown.com", `https://${publicHost}`)
+          .replace("http://play.pokemonshowdown.com", `https://${publicHost}`)
+      );
+    }
+
+    const setCookie = resHeaders.get("set-cookie");
+    if (setCookie) {
+      resHeaders.set("set-cookie", setCookie.replace(/;\s*Domain=[^;]+/gi, ""));
+    }
+
+    const contentType = resHeaders.get("content-type") || "";
+
+    // 4. Inject HTML styles and scripts
+    if (contentType.includes("text/html")) {
+      let html = await response.text();
+
+      html = html
+        .split("//play.pokemonshowdown.com/config/config.js")
+        .join(`//${publicHost}/config/config.js`);
+
+      html = html.replace("<head>", `<head>${INJECTED_HEAD}`);
+      html = html.includes("</body>")
+        ? html.replace("</body>", `${INJECTED_BODY}</body>`)
+        : html + INJECTED_BODY;
+
+      resHeaders.delete("content-length");
+      resHeaders.delete("content-encoding");
+
+      return new Response(html, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: resHeaders,
+      });
+    }
+
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: resHeaders,
+    });
+  },
+};
