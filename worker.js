@@ -507,6 +507,13 @@ const INJECTED_BODY = `
     if (window.Dex && Dex.species && Dex.species.get(raw)) {
       return Dex.species.get(raw).types || [];
     }
+    
+    // Fallback: try using the original name/details without stripping characters
+    var fallbackName = (foe.details ? foe.details.split(',')[0] : (foe.species || foe.name || '')).trim();
+    if (fallbackName && window.Dex && Dex.species) {
+      var speciesData = Dex.species.get(fallbackName);
+      if (speciesData && speciesData.types) return speciesData.types;
+    }
     return [];
   }
 
