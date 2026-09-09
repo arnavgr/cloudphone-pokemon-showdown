@@ -1,0 +1,117 @@
+name: Apply move inspector fix
+
+on:
+  push:
+    branches:
+      - fix/dynamic-move-types
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch worker.js
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('worker.js')
+          text = path.read_text()
+
+          old = """  // 0 Menu: Move Selection Only\n  function inspectMove(index) {\n"""
+          new = r'''  function getEffectiveMoveType(moveData, userMon) {
+    var type = (moveData && moveData.type) || 'Normal';
+    if (!moveData || !userMon) return type;
+
+    var speciesName = '';
+    if (userMon.details) speciesName = userMon.details.split(',')[0].trim();
+    else speciesName = userMon.species || userMon.name || '';
+    speciesName = String(speciesName).trim();
+
+    var moveId = String(moveData.id || moveData.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    var speciesLower = speciesName.toLowerCase();
+
+    // These moves have a battle type that depends on the user's forme.
+    if (moveId === 'ivycudgel' && speciesLower.indexOf('ogerpon') === 0) {
+      if (speciesLower.indexOf('wellspring') !== -1) return 'Water';
+      if (speciesLower.indexOf('hearthflame') !== -1) return 'Fire';
+      if (speciesLower.indexOf('cornerstone') !== -1) return 'Rock';
+      return 'Grass';
+    }
+
+    if (moveId === 'ragingbull' && speciesLower.indexOf('taurospaldea') === 0) {
+      if (speciesLower.indexOf('combat') !== -1) return 'Fighting';
+      if (speciesLower.indexOf('blaze') !== -1) return 'Fire';
+      if (speciesLower.indexOf('aqua') !== -1) return 'Water';
+    }
+
+    if (moveId === 'terablast') {
+      return userMon.terastallized && userMon.teraType ? userMon.teraType : 'Normal';
+    }
+
+    if (moveId === 'terastarstorm') {
+      return speciesLower.indexOf('terapagos-stellar') !== -1 ? 'Stellar' : 'Normal';
+    }
+
+    if (moveId === 'judgment' || moveId === 'multiattack' || moveId === 'revelationdance') {
+      var speciesTypes = userMon.types;
+      if (!speciesTypes || !speciesTypes.length) {
+        var speciesKey = speciesName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+        var speciesDex = (window.BattlePokedex && BattlePokedex[speciesKey]) || (window.Dex && Dex.species ? Dex.species.get(speciesKey) : null);
+        speciesTypes = speciesDex && speciesDex.types;
+      }
+      if (speciesTypes && speciesTypes.length) return speciesTypes[0];
+    }
+
+    return type;
+  }
+
+  // 0 Menu: Move Selection Only
+  function inspectMove(index) {
+'''
+          if old not in text:
+              raise SystemExit('inspectMove anchor not found')
+          text = text.replace(old, new, 1)
+
+          old = """    var type = (dexData && dexData.type) || 'Normal';\n"""
+          new = """    var type = getEffectiveMoveType(dexData, activeMon);\n"""
+          if old not in text:
+              raise SystemExit('inspectMove type line not found')
+          text = text.replace(old, new, 1)
+
+          old = """        var mType = (mData && mData.type) || '—';\n"""
+          new = """        var mType = getEffectiveMoveType(mData, foe) || '—';\n"""
+          if old not in text:
+              raise SystemExit('opponent move type line not found')
+          text = text.replace(old, new, 1)
+
+          old = """        var mType = (mData && mData.type) || 'Normal';\n"""
+          new = """        var mType = getEffectiveMoveType(mData, mon);\n"""
+          if old not in text:
+              raise SystemExit('myteam move type line not found')
+          text = text.replace(old, new, 1)
+
+          # Fix Key 1 stat lookup for nicknamed Pokémon: use Showdown's details/species,
+          # not the nickname stored in mon.name.
+          old = """    var cleanName = (foe.name || foe.species || 'Unknown').replace(/^p[12]:\\s*/i, '');\n    var speciesKey = cleanName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();\n"""
+          new = """    var cleanName = (foe.name || foe.species || 'Unknown').replace(/^p[12]:\\s*/i, '');\n    var speciesName = foe.details ? foe.details.split(',')[0].trim() : (foe.species || '');\n    var speciesKey = (speciesName || foe.name || 'Unknown').replace(/^p[12]:\\s*/i, '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();\n"""
+          if old not in text:
+              raise SystemExit('nickname lookup anchor not found')
+          text = text.replace(old, new, 1)
+
+          path.write_text(text)
+          PY
+
+      - name: Commit and remove patch workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/apply-move-inspector-fix.yml
+          git add worker.js
+          git commit -m "Fix dynamic move types and nicknamed Pokemon lookup"
+          git push origin HEAD:fix/dynamic-move-types
