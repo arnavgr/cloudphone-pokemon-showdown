@@ -1,107 +1,1236 @@
 const TARGET_WEB = "https://play.pokemonshowdown.com";
 const TARGET_SIM = "https://sim3.psim.us";
+
 const AD_TRACKER_PATTERN = /(analytics\.js|gtag\/js|ga\.js|ad-manager\.js|pubads.*\.js|adx-floors\.js|afihbs\.js)/i;
 
 const INJECTED_HEAD = `
 <style>
-#tooltipwrapper,.tooltip,.tooltipwrapper,.tooltip-inner,div[class*="tooltip"],.battle-log-tag{display:none!important;visibility:hidden!important;pointer-events:none!important}
-button[name="openChat"],button[name="closeChat"],button[name="openBattleLog"],button[name="closeBattleLog"],.battle-chat-toggle,.chat-toggle,.battle-log-toggle,.battle-options-menu{display:none!important;visibility:hidden!important;pointer-events:none!important;width:0!important;height:0!important;position:absolute!important;top:-9999px!important;left:-9999px!important}
-.battle-log,.chat-log{display:none!important}
-button:focus,a:focus,input:focus,select:focus{outline:2px solid #ffcc00!important;outline-offset:1px!important;box-shadow:0 0 5px #ffcc00!important}
-.eff-badge{display:inline-block;padding:1px 3px;border-radius:2px;font-weight:bold;font-size:8.5px;margin:1px}.eff-super{background:#1b5e20;color:#a5d6a7;border:1px solid #4caf50}.eff-neutral{background:#37474f;color:#eceff1}.eff-resist{background:#b71c1c;color:#ef9a9a;border:1px solid #e57373}.eff-immune{background:#212121;color:#9e9e9e;border:1px solid #616161}
-</style>`;
+  /* 1. Suppression of Native Hover Tooltips */
+  #tooltipwrapper,
+  .tooltip,
+  .tooltipwrapper,
+  .tooltip-inner,
+  div[class*="tooltip"],
+  .battle-log-tag {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    position: absolute !important;
+    top: -9999px !important;
+    left: -9999px !important;
+    width: 0 !important;
+    height: 0 !important;
+  }
+
+  /* 2. Suppress on-screen mobile chat buttons */
+  button[name="openChat"],
+  button[name="closeChat"],
+  button[name="openBattleLog"],
+  button[name="closeBattleLog"],
+  .battle-chat-toggle,
+  .chat-toggle,
+  .battle-log-toggle,
+  button.battle-chat-toggle,
+  .roomcontrols button[name="openChat"],
+  .roomcontrols button[name="openBattleLog"],
+  .battle-options-menu {
+    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+    width: 0 !important;
+    height: 0 !important;
+    position: absolute !important;
+    top: -9999px !important;
+    left: -9999px !important;
+  }
+
+  /* 3. Hide side chat log in normal view */
+  .battle-log, .chat-log {
+    display: none !important;
+  }
+
+  /* 4. Spatial focus indicator */
+  button:focus, a:focus, input:focus, select:focus {
+    outline: 2px solid #ffcc00 !important;
+    outline-offset: 1px !important;
+    box-shadow: 0 0 5px #ffcc00 !important;
+  }
+
+  /* 5. Chat Modal Internal Styling */
+  #cp-chat-content .chat {
+    padding: 2px 0 !important;
+    border-bottom: 1px solid rgba(255,255,255,0.05) !important;
+  }
+  #cp-chat-content .chat strong {
+    color: #ffd700 !important;
+  }
+  #cp-chat-content .battle-history {
+    color: #88a0b8 !important;
+    font-style: italic !important;
+  }
+
+  /* 6. Compact Effectiveness Badges */
+  .eff-badge {
+    display: inline-block;
+    padding: 1px 3px;
+    border-radius: 2px;
+    font-weight: bold;
+    font-size: 8.5px;
+    margin: 1px 1px;
+  }
+  .eff-super { background: #1b5e20; color: #a5d6a7; border: 1px solid #4caf50; }
+  .eff-neutral { background: #37474f; color: #eceff1; }
+  .eff-resist { background: #b71c1c; color: #ef9a9a; border: 1px solid #e57373; }
+  .eff-immune { background: #212121; color: #9e9e9e; border: 1px solid #616161; }
+</style>
+`;
 
 const INJECTED_BODY = `
 <script>
-(function(){
-'use strict';
-try{localStorage.setItem('showdown_crossteams','false')}catch(e){}
-var activeInspectType=null,activeInspectIndex=1,chatSyncTimer=null,targetButtons=[],targetIndex=0,currentBattleKey='',battleContexts=Object.create(null),moveViewMode='normal';
-var TYPE_LIST=['Normal','Fire','Water','Electric','Grass','Ice','Fighting','Poison','Ground','Flying','Psychic','Bug','Rock','Ghost','Dragon','Dark','Steel','Fairy'];
-var TYPE_CHART={Normal:{Rock:.5,Ghost:0,Steel:.5},Fire:{Fire:.5,Water:.5,Grass:2,Ice:2,Bug:2,Rock:.5,Dragon:.5,Steel:2},Water:{Fire:2,Water:.5,Grass:.5,Ground:2,Rock:2,Dragon:.5},Electric:{Water:2,Electric:.5,Grass:.5,Ground:0,Flying:2,Dragon:.5},Grass:{Fire:.5,Water:2,Grass:.5,Poison:.5,Ground:2,Flying:.5,Bug:.5,Rock:2,Dragon:.5,Steel:.5},Ice:{Fire:.5,Water:.5,Grass:2,Ice:.5,Ground:2,Flying:2,Dragon:2,Steel:.5},Fighting:{Normal:2,Ice:2,Poison:.5,Flying:.5,Psychic:.5,Bug:.5,Rock:2,Ghost:0,Dark:2,Steel:2,Fairy:.5},Poison:{Grass:2,Poison:.5,Ground:.5,Rock:.5,Ghost:.5,Steel:0,Fairy:2},Ground:{Fire:2,Electric:2,Grass:.5,Poison:2,Flying:0,Bug:.5,Rock:2,Steel:2},Flying:{Electric:.5,Grass:2,Fighting:2,Bug:2,Rock:.5,Steel:.5},Psychic:{Fighting:2,Poison:2,Psychic:.5,Dark:0,Steel:.5},Bug:{Fire:.5,Grass:2,Fighting:.5,Poison:.5,Flying:.5,Psychic:2,Ghost:.5,Steel:.5,Fairy:.5},Rock:{Fire:2,Ice:2,Fighting:.5,Ground:.5,Flying:2,Bug:2,Steel:.5},Ghost:{Normal:0,Psychic:2,Ghost:2,Dark:.5},Dragon:{Dragon:2,Steel:.5,Fairy:0},Dark:{Fighting:.5,Psychic:2,Ghost:2,Dark:.5,Fairy:.5},Steel:{Fire:.5,Water:.5,Electric:.5,Ice:2,Rock:2,Steel:.5,Fairy:2},Fairy:{Fire:.5,Fighting:2,Poison:.5,Dragon:2,Dark:2,Steel:.5}};
-function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
-function idOf(s){return String(s||'').toLowerCase().replace(/[^a-z0-9]/g,'')}
-function getEffectiveness(t,types){if(!t||!types||!types.length||!TYPE_CHART[t])return 1;return types.reduce(function(m,x){return m*(TYPE_CHART[t][x]===undefined?1:TYPE_CHART[t][x])},1)}
-function badge(m){if(m===0)return '<span class="eff-badge eff-immune">Immune (0×)</span>';if(m>=2)return '<span class="eff-badge eff-super">Super Eff ('+m+'×)</span>';if(m<=.5)return '<span class="eff-badge eff-resist">Not Eff ('+m+'×)</span>';return '<span class="eff-badge eff-neutral">Neutral (1×)</span>'}
-function getItemDesc(n){if(!n)return '';var c=String(n).replace(/\s*\(Lost\)$/i,''),d=(window.BattleItems&&BattleItems[idOf(c)])||(window.Dex&&Dex.items&&Dex.items.get(c));return d&&(d.shortDesc||d.desc)||''}
-function getAbilityDesc(n){if(!n)return '';var c=String(n).replace(/\s*\(Possible\)$/i,''),d=(window.BattleAbilities&&BattleAbilities[idOf(c)])||(window.Dex&&Dex.abilities&&Dex.abilities.get(c));return d&&(d.shortDesc||d.desc)||''}
-function isAlive(p){if(!p)return false;if(p.fainted||p.status==='fnt')return false;if(p.condition&&(/fnt/.test(p.condition)||p.condition==='0 fnt'))return false;if(p.hp!==undefined&&p.maxhp&&p.hp===0)return false;return true}
-function getRoom(){if(!window.app)return null;var r=app.curRoom||app.curSideRoom;if(r&&r.battle)return r;if(app.rooms)for(var k in app.rooms)if(app.rooms[k]&&app.rooms[k].battle)return app.rooms[k];return r||null}
-function battleKey(){var r=getRoom();return r?(r.id||r.title||'battle'):'none'}
-function ctx(){var k=battleKey();if(!battleContexts[k])battleContexts[k]={seen:Object.create(null),turns:[],lastLogLen:0};return battleContexts[k]}
-function ensureContext(){var k=battleKey();if(k!==currentBattleKey){currentBattleKey=k;activeInspectIndex=1;moveViewMode='normal';targetButtons=[];targetIndex=0;syncChatContent(true);refreshModal()}}
-function getRequest(){var r=getRoom();return r&&(r.request||(r.battle&&r.battle.request))||null}
-function mySide(){var r=getRoom(),b=r&&r.battle;if(!b)return null;return b.yourSide||(b.mySide)||((b.sides&&b.mySide&&b.sides[b.mySide.n])||null)||((b.sides&&b.sides[0])||null)}
-function foeSide(){var r=getRoom(),b=r&&r.battle;if(!b)return null;if(b.mySide&&b.mySide.foe)return b.mySide.foe;if(b.farSide)return b.farSide;if(b.sides&&b.mySide&&b.mySide.n!==undefined)return b.sides[b.mySide.n?0:1];return b.foe||null}
-function activeOwn(){var s=mySide();if(s&&s.active)for(var i=0;i<s.active.length;i++)if(s.active[i])return s.active[i];var q=getRequest();if(q&&q.side&&q.side.pokemon)for(var j=0;j<q.side.pokemon.length;j++)if(q.side.pokemon[j].active)return q.side.pokemon[j];return null}
-function activeFoes(){var s=foeSide(),out=[];if(s&&s.active)for(var i=0;i<s.active.length;i++)if(s.active[i])out.push(s.active[i]);return out}
-function getFoeTeam(){var s=foeSide(),a=activeFoes(),out=[];a.forEach(function(p){if(isAlive(p)&&out.indexOf(p)<0)out.push(p)});if(s&&s.pokemon)s.pokemon.forEach(function(p){if(p&&isAlive(p)&&out.indexOf(p)<0)out.push(p)});return out}
-function getMyAliveTeam(){var q=getRequest(),out=[];if(q&&q.side&&q.side.pokemon){q.side.pokemon.forEach(function(p,i){if(isAlive(p))out.push({mon:p,slot:i+1})});if(out.length)return out}var s=mySide();if(s&&s.pokemon)s.pokemon.forEach(function(p,i){if(isAlive(p))out.push({mon:p,slot:i+1})});return out}
-function speciesName(p){return p?(p.details?p.details.split(',')[0]:(p.species||p.name||'Unknown')):'Unknown'}
-function speciesData(p){var n=speciesName(p),id=idOf(n);return (window.BattlePokedex&&BattlePokedex[id])||(window.Dex&&Dex.species&&Dex.species.get(n))||(window.Dex&&Dex.species&&Dex.species.get(id))||{}}
-function typesOf(p){if(!p)return [];if(p.terastallized&&typeof p.terastallized==='string'&&p.terastallized!=='Stellar')return[p.terastallized];if(p.teraType&&p.terastallized&&p.teraType!=='Stellar')return[p.teraType];if(p.types&&p.types.length)return p.types;var d=speciesData(p);return d.types||[]}
-function movesOf(p){var out=[],seen=Object.create(null);function add(x){var n=typeof x==='string'?x:(x&&x.name)||'';n=String(n||'').trim();var id=idOf(n);if(n&&id&&!seen[id]){seen[id]=1;out.push(n)}}if(p){if(Array.isArray(p.moveTrack))p.moveTrack.forEach(add);if(Array.isArray(p.moves))p.moves.forEach(add)}return out}
-function currentBoosts(p){var b=(p&&p.boosts)||{},names={atk:'Atk',def:'Def',spa:'SpA',spd:'SpD',spe:'Spe',accuracy:'Acc',evasion:'Eva'},out=[];Object.keys(names).forEach(function(k){if(b[k])out.push(names[k]+' '+(b[k]>0?'+':'')+b[k])});return out}
-function statusText(p){var c=p&&p.condition?String(p.condition):'',s=p&&p.status?String(p.status):'';if(s&&s!=='fnt')return s.toUpperCase();if(c&&c!=='0')return c.replace(/\s+.*/,'').toUpperCase();return isAlive(p)?'OK':'FAINTED'}
-function stateLine(p){if(!p)return '';var st=statusText(p),boost=currentBoosts(p);return '<b>Status:</b> '+esc(st)+(boost.length?' &nbsp; <b>Boosts:</b> '+esc(boost.join(', ')):'')}
-function getInspector(){var e=document.getElementById('cp-inspector');if(!e){e=document.createElement('div');e.id='cp-inspector';e.style.cssText='position:fixed!important;top:50%!important;left:50%!important;transform:translate(-50%,-50%)!important;width:226px!important;max-height:276px!important;background:#0e121a!important;border:2px solid #ffd700!important;border-radius:6px!important;color:#fff!important;padding:5px 6px!important;z-index:2147483647!important;font-family:sans-serif!important;font-size:9.5px!important;line-height:1.25!important;box-shadow:0 0 20px rgba(0,0,0,.95)!important;box-sizing:border-box!important;display:none;flex-direction:column!important';e.innerHTML='<div id="cp-insp-title" style="font-size:10.5px;font-weight:bold;color:#ffd700;margin-bottom:2px;border-bottom:1px solid #333;padding-bottom:2px"></div><div id="cp-insp-body" style="color:#e0e0e0;flex:1!important;max-height:212px!important;overflow-y:auto!important;margin-bottom:3px;padding-right:2px;word-break:break-word"></div><div id="cp-insp-footer" style="font-size:8.5px;color:#00ffcc;font-weight:bold;text-align:center;border-top:1px solid #333;padding-top:2px"></div>';document.body.appendChild(e)}return e}
-function hideInspector(){var e=getInspector();e.style.setProperty('display','none','important');activeInspectType=null;moveViewMode='normal'}
-function showInspector(t,b,type,i,self){hideChatModal();var e=getInspector();document.getElementById('cp-insp-title').innerHTML=t;var body=document.getElementById('cp-insp-body');body.innerHTML=b;body.scrollTop=0;var f=document.getElementById('cp-insp-footer');if(type==='move')f.innerHTML='[CALL/OK] Use Move | [◄►] Cycle Moves | [▼] Full Desc | [▲] Back | [#] Cancel';else if(type==='movefull')f.innerHTML='[▼] Damage Estimate | [▲] Back | [#] Cancel';else if(type==='damage')f.innerHTML='[▲] Full Desc | [◄►] Cycle Moves | [#] Close';else if(type==='opponent')f.innerHTML='[◄►] Cycle Foe | [▲▼] Scroll | [#] Close';else if(type==='myteam')f.innerHTML=self?'<span style="color:#ffcc00">[CURRENT ACTIVE]</span> | [◄►] Cycle | [▲▼] Scroll | [#] Close':'[CALL/OK] Switch In | [◄►] Cycle | [▲▼] Scroll | [#] Close';else if(type==='guide')f.innerHTML='[▲▼] Scroll Guide | [#] Close';else if(type==='preview')f.innerHTML='[◄►] Cycle Side | [▲▼] Scroll | [#] Close';else if(type==='history'||type==='revealed')f.innerHTML='[▲▼] Scroll | [#] Close';else if(type==='target')f.innerHTML='[CALL/OK] Confirm Target | [◄►] Cycle Target | [#] Cancel';e.style.setProperty('display','flex','important');activeInspectType=type;activeInspectIndex=Number(i)||1}
-function renderDef(types){var w=[],r=[],im=[];TYPE_LIST.forEach(function(t){var m=getEffectiveness(t,types);if(m===0)im.push(t);else if(m>1)w.push(t+' ('+m+'×)');else if(m<1)r.push(t+' ('+m+'×)')});return '<div style="margin-top:3px;border-top:1px solid #333;padding-top:2px"><b>Defensive Profile:</b></div>'+(w.length?'<div><span style="color:#a5d6a7;font-weight:bold">Weak:</span> '+esc(w.join(', '))+'</div>':'')+(r.length?'<div><span style="color:#ef9a9a;font-weight:bold">Resist:</span> '+esc(r.join(', '))+'</div>':'')+(im.length?'<div><span style="color:#9e9e9e;font-weight:bold">Immune:</span> '+esc(im.join(', '))+'</div>':'')}
-function getCurrentMoveData(index){index=Number(index)||1;var moveBtn=document.querySelector('button[name="chooseMove"][value="'+index+'"]')||document.querySelectorAll('button[name="chooseMove"]')[index-1],req=getRequest(),reqMove=req&&req.active&&req.active[0]&&req.active[0].moves&&req.active[0].moves[index-1],rawName=(moveBtn&&(moveBtn.getAttribute('data-move')||moveBtn.innerText.split('\\n')[0]))||(reqMove&&reqMove.move)||('Move '+index),moveId=idOf(rawName),dexData=(window.BattleMovedex&&BattleMovedex[moveId])?(BattleMovedex[moveId]):(window.Dex&&Dex.moves?Dex.moves.get(rawName):null);return{moveBtn:moveBtn,reqMove:reqMove,rawName:rawName,moveName:(dexData&&dexData.name)||(reqMove&&reqMove.move)||rawName,dexData:dexData}}
-function inspectMove(index){moveViewMode='normal';index=Number(index)||1;var d=getCurrentMoveData(index),reqMove=d.reqMove,dexData=d.dexData,req=getRequest(),activeMon=req&&req.side&&req.side.pokemon&&(req.side.pokemon.find(function(p){return p.active})||req.side.pokemon[0]),foe=activeFoes()[0],foeTypes=typesOf(foe),foeName=foe?(foe.name||foe.species||'Opponent').replace(/^p[12]:\\s*/i,''):'Opponent',moveName=d.moveName,type=(dexData&&dexData.type)||'Normal',category=(dexData&&dexData.category)||'',bp=(dexData&&(dexData.basePower||'—'))||'—',acc=(dexData&&(dexData.accuracy===true?'—':(dexData.accuracy+'%')))||'—',ppText=reqMove&&reqMove.pp!==undefined?(reqMove.pp+'/'+reqMove.maxpp):'—',mult=category==='Status'?1:getEffectiveness(type,foeTypes),effHtml=category==='Status'?'<span class="eff-badge eff-neutral">Status</span>':badge(mult),activeSpecies=activeMon?activeMon.details.split(',')[0]:'Active',activeDex=speciesData(activeMon),activeTypes=(activeMon&&activeMon.types)||(activeDex&&activeDex.types)||[],activeSpeed=activeMon&&activeMon.stats&&activeMon.stats.spe?activeMon.stats.spe:(activeDex.baseStats&&activeDex.baseStats.spe)||'—',html='<div style="background:rgba(255,255,255,.06);padding:2px 4px;border-radius:3px;margin-bottom:3px"><b>'+esc(activeSpecies)+'</b> ('+esc(activeTypes.join('/')||'—')+') &nbsp;|&nbsp; <b>Spe:</b> '+esc(activeSpeed)+'</div><div><b>Type:</b> '+esc(type)+' '+(category?'('+esc(category)+')':'')+'</div><div><b>BP:</b> '+esc(bp)+' &nbsp;|&nbsp; <b>Acc:</b> '+esc(acc)+' &nbsp;|&nbsp; <b>PP:</b> '+esc(ppText)+'</div><div style="margin:3px 0"><b>Vs '+esc(foeName)+' ('+esc(foeTypes.join('/')||'—')+'):</b><br>'+effHtml+'</div>'+(dexData&&(dexData.shortDesc||dexData.desc)?'<div style="margin-top:2px;color:#bbb;font-size:9px">'+esc(dexData.shortDesc||dexData.desc)+'</div>':'')+(reqMove&&reqMove.disabled?'<div style="color:#ff5555;font-weight:bold">[DISABLED]</div>':'');showInspector('⚡ Move '+index+'/4: '+esc(moveName),html,'move',index,false)}
-function inspectMoveFullDescription(index){moveViewMode='full';index=Number(index)||1;var d=getCurrentMoveData(index),dexData=d.dexData,moveName=d.moveName,desc=(dexData&&(dexData.desc||dexData.shortDesc))||'No full description is available for this move.';var html='<div style="font-weight:bold;color:#00ffcc;margin-bottom:4px">Full Move Description</div><div style="background:rgba(255,255,255,.06);padding:4px;border-radius:3px;margin-bottom:4px"><b>'+esc(moveName)+'</b></div><div style="font-size:9.5px;line-height:1.35;color:#e6e6e6">'+esc(desc)+'</div><div style="margin-top:6px;color:#888;font-size:8.5px">Press ▼ again for the damage estimate. Press ▲ to return.</div>';showInspector('📖 Move '+index+'/4: '+esc(moveName)+' — Full Description',html,'movefull',index,false)}
-function statValue(mon,key,baseStats){if(mon&&mon.stats&&typeof mon.stats[key]==='number')return mon.stats[key];if(baseStats&&typeof baseStats[key]==='number'){var level=Number(mon&&mon.level)||100;return Math.floor(((2*baseStats[key]+31)*level/100)+5)}return 0}
-function boostMult(stage){stage=Number(stage)||0;return stage>=0?(2+stage)/2:2/(2-stage)}
-function calcDamageRange(attacker,defender,move){var md=move&&move.dexData;if(!attacker||!defender||!md||!md.basePower||md.category==='Status')return null;var ad=speciesData(attacker),dd=speciesData(defender),level=Number(attacker.level)||100,offKey=md.category==='Physical'?'atk':'spa',defKey=md.category==='Physical'?'def':'spd',atk=statValue(attacker,offKey,ad.baseStats),defMin=statValue(defender,defKey,dd.baseStats),defMax=defMin;if(!defender.stats||typeof defender.stats[defKey]!=='number'){var base=dd.baseStats&&dd.baseStats[defKey]||0,dl=Number(defender.level)||100,neutral=Math.floor(((2*base+31)*dl/100)+5),beneficial=Math.floor(neutral*1.1),uninvested=Math.floor(neutral*.9);defMin=Math.max(1,uninvested);defMax=Math.max(defMin,beneficial+63)}var am=(attacker.boosts&&attacker.boosts[offKey])||0,dm=(defender.boosts&&defender.boosts[defKey])||0;atk=Math.floor(atk*boostMult(am));defMin=Math.max(1,Math.floor(defMin*boostMult(dm)));defMax=Math.max(defMin,Math.floor(defMax*boostMult(dm)));var lowBase=Math.floor(Math.floor((Math.floor(2*level/5)+2)*md.basePower*atk/defMax)/50)+2,highBase=Math.floor(Math.floor((Math.floor(2*level/5)+2)*md.basePower*atk/defMin)/50)+2,stab=typesOf(attacker).indexOf(md.type)>=0?1.5:1,eff=getEffectiveness(md.type,typesOf(defender));if(eff===0)return{min:0,max:0,eff:0,hp:defender.maxhp||0,pctLo:0,pctHi:0,approx:false};var lo=Math.floor(lowBase*stab*eff*.85),hi=Math.floor(highBase*stab*eff),hp=defender.maxhp||0;return{min:Math.max(0,lo),max:Math.max(lo,hi),eff:eff,hp:hp,pctLo:hp?Math.floor(lo*100/hp*10)/10:0,pctHi:hp?Math.floor(hi*100/hp*10)/10:0,approx:!(defender.stats&&typeof defender.stats[defKey]==='number')||!(attacker.stats&&typeof attacker.stats[offKey]==='number')}}
-function inspectMoveDamage(index){moveViewMode='damage';index=Number(index)||1;var d=getCurrentMoveData(index),att=activeOwn(),foe=activeFoes()[0],md=d.dexData,html='<div style="font-weight:bold;color:#00ffcc;margin-bottom:4px">Estimated Damage</div>';if(!att||!foe||!md||!md.basePower||md.category==='Status'){html+='<div>This move does not have a numeric damage estimate.</div>';if(md&&md.category==='Status')html+='<div style="margin-top:4px;color:#aaa">Status moves are excluded.</div>';showInspector('🧮 '+esc(d.moveName)+' — Damage',html,'damage',index,false);return}var r=calcDamageRange(att,foe,d);html+='<div><b>'+esc(d.moveName)+'</b> vs <b>'+esc(speciesName(foe))+'</b></div><div style="margin-top:3px;font-size:12px"><b>'+r.min+'–'+r.max+' HP</b>'+(r.hp?' ('+r.pctLo+'–'+r.pctHi+'%)':'')+'</div><div style="margin-top:3px">Effectiveness: '+badge(r.eff)+'</div><div><b>Attacker:</b> '+esc(speciesName(att))+' &nbsp; <b>Lv:</b> '+(Number(att.level)||100)+'</div><div><b>Power:</b> '+esc(md.basePower)+' &nbsp; <b>'+esc(md.category)+'</b></div><div style="margin-top:4px;color:#aaa;font-size:8.5px">Estimated range. Hidden foe defensive stats/EVs and format-specific modifiers can change the real damage.</div>';showInspector('🧮 '+esc(d.moveName)+' — Damage',html,'damage',index,false)}
-function inspectOpponent(index){var list=getFoeTeam();index=Number(index)||1;if(!list.length){showInspector('🎯 Opponent Team','<div>No alive/revealed opponent Pokémon yet.</div>','opponent',1,false);return}if(index>list.length)index=1;if(index<1)index=list.length;var p=list[index-1],d=speciesData(p),types=typesOf(p),moves=movesOf(p),rawItem=p.item||(p.prevItem?(p.prevItem+' (Lost)'):''),itemDesc=getItemDesc(rawItem),ab=p.ability||'',abDesc=getAbilityDesc(ab),baseSpe=(d.baseStats&&d.baseStats.spe)||0,level=Number(p.level)||100,html='<div><b>Types:</b> '+esc(types.join(' / ')||'Unknown')+(p.terastallized||p.teraType?' <span style="color:#00ffcc"><b>[Tera: '+esc(p.teraType||p.terastallized)+']</b></span>':'')+(p.active?' <span style="color:#00ffcc"><b>[ACTIVE]</b></span>':'')+'</div>'+stateLine(p);if(baseSpe)html+='<div><b>Speed:</b> '+Math.floor((2*baseSpe*level/100)+5)+'–'+Math.floor(((2*baseSpe+94)*level/100+5)*1.1)+' <span style="color:#888">(base '+baseSpe+')</span></div>';html+='<div><b>Item:</b> '+esc(rawItem||'Unrevealed / None')+'</div>'+(itemDesc?'<div style="color:#aaa;font-size:8.5px">↳ '+esc(itemDesc)+'</div>':'')+'<div><b>Ability:</b> '+esc(ab||'Unknown')+'</div>'+(abDesc?'<div style="color:#aaa;font-size:8.5px">↳ '+esc(abDesc)+'</div>':'');if(moves.length){html+='<div style="margin-top:3px;border-top:1px solid #333;padding-top:2px"><b>Revealed Moves:</b></div>';moves.forEach(function(n){var md=(window.BattleMovedex&&BattleMovedex[idOf(n)])||(window.Dex&&Dex.moves&&Dex.moves.get(n))||{};html+='<div style="font-size:9px;margin:1px 0">• '+esc(n)+' <span style="color:#ffd700">['+esc(md.type||'—')+' '+esc((md.category||'')[0]||'')+']</span>'+(md.basePower?' (BP: '+md.basePower+')':'')+'</div>'})}else html+='<div style="color:#888;margin-top:3px"><b>Revealed Moves:</b> None yet</div>';html+=renderDef(types);showInspector('🎯 Opponent '+index+'/'+list.length+': '+esc(speciesName(p)),html,'opponent',index,false)}
-function inspectMyTeam(index){var list=getMyAliveTeam();index=Number(index)||1;if(!list.length){showInspector('🛡️ My Team & Switch','<div>No alive Pokémon available.</div>','myteam',1,false);return}if(index>list.length)index=1;if(index<1)index=list.length;var x=list[index-1],p=x.mon,d=speciesData(p),types=typesOf(p),s=p.stats||d.baseStats||{},itemDesc=getItemDesc(p.item),abDesc=getAbilityDesc(p.ability),foe=activeFoes()[0],foeTypes=typesOf(foe),html='<div><b>Types:</b> '+esc(types.join(' / ')||'Unknown')+' '+(p.teraType?'[Tera: '+esc(p.teraType)+']':'')+'</div>'+stateLine(p)+'<div style="background:rgba(255,255,255,.06);padding:2px 4px;border-radius:3px;margin:2px 0"><b>HP:</b> '+esc(p.condition||'—')+' | <b>Spe:</b> '+esc(s.spe||'—')+'<br><b>Atk:</b> '+esc(s.atk||'—')+' | <b>Def:</b> '+esc(s.def||'—')+' | <b>SpA:</b> '+esc(s.spa||'—')+' | <b>SpD:</b> '+esc(s.spd||'—')+'</div><div><b>Item:</b> '+esc(p.item||'None')+'</div>'+(itemDesc?'<div style="color:#aaa;font-size:8.5px">↳ '+esc(itemDesc)+'</div>':'')+'<div><b>Ability:</b> '+esc(p.ability||'Unknown')+'</div>'+(abDesc?'<div style="color:#aaa;font-size:8.5px">↳ '+esc(abDesc)+'</div>':'');if(p.moves&&p.moves.length&&foe){html+='<div style="margin-top:3px;border-top:1px solid #333;padding-top:2px"><b>Moves vs '+esc(speciesName(foe))+' ('+esc(foeTypes.join('/')||'—')+'):</b></div>';p.moves.forEach(function(n){var md=(window.BattleMovedex&&BattleMovedex[idOf(n)])||(window.Dex&&Dex.moves&&Dex.moves.get(n))||{},mt=md.type||'Normal',mc=md.category||'';html+='<div style="font-size:9px;margin:2px 0">• <b>'+esc(n)+'</b> <span style="color:#ffd700">['+mt+(mc?' '+mc[0]:'')+']</span> '+(mc==='Status'?'<span class="eff-badge eff-neutral">Status</span>':badge(getEffectiveness(mt,foeTypes)))+'</div>'})}html+=renderDef(types);showInspector((p.active?'🛡️ [Active] ':'🔄 [Switch] ')+'Slot '+x.slot+' ('+index+'/'+list.length+'): '+esc(speciesName(p)),html,'myteam',index,!!p.active)}
-function inspectGuide(){var h='<div style="font-weight:bold;color:#00ffcc">Keypad Controls</div><div><b>[0]</b> Move Analysis</div><div><b>[1]</b> Opponent + revealed info</div><div><b>[2]</b> My Team + direct switch</div><div><b>[3]</b> This Guide</div><div><b>[4]</b> Team Preview</div><div><b>[5]</b> Structured Turn History</div><div><b>[6]</b> Revealed Information History</div><div><b>[9]</b> Battle Log + Chat</div><div><b>[*]</b> Tera / Mega / Dynamax / Z-Move</div><div><b>[#]</b> Undo / Close</div><div><b>[0 ▼]</b> Full move description; ▼ again for estimated damage</div><div><b>[▲]</b> Step back through move views</div><div><b>[D-Pad ◄►]</b> Cycle / choose target</div><div><b>[D-Pad ▲▼]</b> Scroll</div><div><b>[CALL/OK]</b> Confirm or focus/send chat</div>';showInspector('📖 Battle Controls Guide',h,'guide',1,false)}
-function previewSide(side){var arr=side&&side.pokemon||[],h='<div style="color:#00ffcc;font-weight:bold;margin-bottom:3px">Known Team Preview</div>';if(!arr.length)return '<div>Team data not available yet.</div>';arr.forEach(function(p,i){var n=speciesName(p),known=n&&n!=='Unknown';h+='<div style="margin:2px 0"><b>'+(i+1)+'.</b> '+esc(known?n:'???')+' '+(p.fainted?'[FNT]':p.active?'[ACTIVE]':'')+(typesOf(p).length?' ['+esc(typesOf(p).join('/'))+']':'')+'</div>'});return h}
-function inspectPreview(index){var side=index===2?foeSide():mySide();showInspector('👁 Team Preview: '+(index===2?'Opponent':'My Team'),previewSide(side),'preview',index,false)}
-function buildStructuredHistory(){var r=getRoom(),log=r&&r.battle&&Array.isArray(r.battle.log)?r.battle.log:[],c=ctx();c.turns=[];var turn=0;log.forEach(function(line){if(typeof line!=='string')return;var p=line.split('|');if(p[1]==='turn'){turn=parseInt(p[2],10)||turn+1;c.turns.push({turn:turn,events:[]});return}if(!c.turns.length)c.turns.push({turn:0,events:[]});var e='';switch(p[1]){case'move':e='MOVE '+short(p[2])+' → '+short(p[3]);break;case'switch':case'drag':e='SWITCH '+short(p[2])+' → '+short(p[3]);break;case'-damage':case'damage':e='DAMAGE '+short(p[2])+': '+short(p[3]);break;case'-heal':e='HEAL '+short(p[2])+': '+short(p[3]);break;case'-status':e='STATUS '+short(p[2])+' '+short(p[3]);break;case'-curestatus':e='CURE '+short(p[2])+' '+short(p[3]);break;case'-boost':case'-unboost':e=(p[1]==='-boost'?'BOOST ':'UNBOOST ')+short(p[2])+' '+short(p[3])+' '+short(p[4]);break;case'-item':e='ITEM '+short(p[2])+' '+short(p[3]);break;case'-ability':e='ABILITY '+short(p[2])+' '+short(p[3]);break;case'faint':e='FAINT '+short(p[2]);break;case'-terastallize':e='TERA '+short(p[2])+' '+short(p[3]);break;case'-formechange':e='FORM '+short(p[2])+' → '+short(p[3]);break;case'message':e=p.slice(2).join('|');break}if(e)c.turns[c.turns.length-1].events.push(e)});return c.turns;function short(s){return String(s||'').replace(/^p[12][a-z]?[: ]+/i,'').replace(/\|/g,' / ').trim()}}
-function inspectHistory(){var turns=buildStructuredHistory(),h=turns.length?turns.map(function(t){return '<div style="border-bottom:1px solid #333;padding:3px 0"><b style="color:#00ffcc">Turn '+t.turn+'</b>'+(t.events.length?t.events.map(function(e){return '<div style="margin-left:4px">• '+esc(e)+'</div>'}).join(''):'<div style="color:#777">• No structured events</div>')+'</div>'}).join(''):'<div>No structured battle history yet.</div>';showInspector('📜 Structured Turn History',h,'history',1,false)}
-function updateRevealed(){var c=ctx(),r=getRoom(),log=r&&r.battle&&Array.isArray(r.battle.log)?r.battle.log:[];log.forEach(function(line){if(typeof line!=='string')return;var p=line.split('|'),tag=p[1];if(!['switch','drag','-item','-ability','-boost','-unboost','-status','-curestatus','move','faint','-terastallize'].includes(tag))return;var who=String(p[2]||'').replace(/^p[12][a-z]?[: ]+/i,'').trim();if(!who)return;var key=who.toLowerCase();if(!c.seen[key])c.seen[key]={name:who,items:[],abilities:[],moves:[],events:[]};var q=c.seen[key];if(tag==='move'&&p[3]&&q.moves.indexOf(p[3])<0)q.moves.push(p[3]);if(tag==='-item'&&p[3]&&q.items.indexOf(p[3])<0)q.items.push(p[3]);if(tag==='-ability'&&p[3]&&q.abilities.indexOf(p[3])<0)q.abilities.push(p[3]);if(tag!=='move'&&tag!=='switch'&&tag!=='drag')q.events.push((tag+' '+p.slice(3).join(' ')).trim())});return c}
-function inspectRevealed(){var c=updateRevealed(),vals=Object.keys(c.seen),h=vals.length?vals.map(function(k){var q=c.seen[k];return '<div style="border-bottom:1px solid #333;padding:3px 0"><b style="color:#ffd700">'+esc(q.name)+'</b>'+(q.items.length?'<div>Item: '+esc(q.items.join(', '))+'</div>':'')+(q.abilities.length?'<div>Ability: '+esc(q.abilities.join(', '))+'</div>':'')+(q.moves.length?'<div>Moves: '+esc(q.moves.join(', '))+'</div>':'')+(q.events.length?'<div>State: '+esc(q.events.slice(-4).join(' | '))+'</div>':'')+'</div>'}).join(''):'<div>No revealed information recorded yet.</div>';showInspector('🔎 Revealed Information History',h,'revealed',1,false)}
-function getChatModal(){var e=document.getElementById('cp-chat-modal');if(!e){e=document.createElement('div');e.id='cp-chat-modal';e.style.cssText='position:fixed!important;top:50%!important;left:50%!important;transform:translate(-50%,-50%)!important;width:226px!important;height:270px!important;background:#0c1016!important;border:2px solid #00ffcc!important;border-radius:6px!important;color:#e0e0e0!important;padding:6px!important;z-index:2147483646!important;font-family:sans-serif!important;font-size:10px!important;line-height:1.25!important;box-shadow:0 0 22px rgba(0,0,0,.98)!important;box-sizing:border-box!important;display:none;flex-direction:column!important';e.innerHTML='<div style="font-size:10.5px;font-weight:bold;color:#00ffcc;border-bottom:1px solid #333;padding-bottom:2px;margin-bottom:3px;display:flex;justify-content:space-between"><span>💬 Battle Log & Chat</span><span style="color:#888;font-size:9px">[#] Close</span></div><div id="cp-chat-context" style="font-size:8px;color:#888;margin-bottom:2px"></div><div id="cp-chat-content" style="flex:1!important;overflow-y:auto!important;margin-bottom:4px;padding-right:2px;word-break:break-word"></div><form id="cp-chat-form" style="display:flex;gap:3px;margin:0;padding:0"><input type="text" id="cp-chat-input" autocomplete="off" placeholder="Type msg..." style="flex:1;min-width:0;background:#18202c;border:1px solid #00ffcc;border-radius:3px;color:#fff;font-size:9.5px;padding:2px 4px;box-sizing:border-box"><button type="submit" style="background:#00aa88;border:none;border-radius:3px;color:#fff;font-size:9px;font-weight:bold;padding:0 6px">Send</button></form><div style="font-size:8px;color:#777;text-align:center;margin-top:2px">[D-Pad] Scroll | [OK/Call] Focus + Send</div>';document.body.appendChild(e);var form=e.querySelector('#cp-chat-form'),input=e.querySelector('#cp-chat-input'),send=e.querySelector('button[type="submit"]');form.addEventListener('submit',function(ev){ev.preventDefault();submitChatMessage()});send.addEventListener('click',function(ev){ev.preventDefault();submitChatMessage()});input.addEventListener('keydown',function(ev){if(ev.key==='Enter'||ev.keyCode===13){ev.preventDefault();ev.stopPropagation();submitChatMessage()}else if(ev.key==='Escape'){ev.preventDefault();input.blur();hideChatModal()}})}return e}
-function isChatOpen(){var e=getChatModal();return e&&e.style.display==='flex'}
-function roomLogSource(){var r=getRoom();if(!r)return null;var root=r.el||document,cands=[root.querySelector&&root.querySelector('.battle-log .inner'),root.querySelector&&root.querySelector('.battle-log'),root.querySelector&&root.querySelector('.chat-log .inner'),root.querySelector&&root.querySelector('.chat-log')];for(var i=0;i<cands.length;i++)if(cands[i]&&cands[i].innerHTML.trim())return cands[i];return null}
-function syncChatContent(force){var e=getChatModal(),content=document.getElementById('cp-chat-content'),ctxEl=document.getElementById('cp-chat-context');if(!content)return;var k=battleKey();if(force||e.dataset.battleKey!==k){e.dataset.battleKey=k;content.innerHTML='';if(ctxEl)ctxEl.textContent=k&&k!=='none'?String(k):'No active battle'}var src=roomLogSource(),r=getRoom(),log=r&&r.battle&&Array.isArray(r.battle.log)?r.battle.log:[];if(src){var near=content.scrollHeight-content.scrollTop-content.clientHeight<45;if(content.innerHTML!==src.innerHTML){content.innerHTML=src.innerHTML;if(near||force)content.scrollTop=content.scrollHeight}}else if(log.length){var txt=log.slice(-80).map(function(x){return '<div class="battle-history">'+esc(String(x).replace(/^\|[^|]+\|?/,'')).replace(/\\n/g,'<br>')+'</div>'}).join('');if(content.innerHTML!==txt){content.innerHTML=txt;content.scrollTop=content.scrollHeight}}else if(!content.children.length)content.innerHTML='<div style="color:#777;padding:10px 0;text-align:center">No log or messages yet.</div>'}
-function hideChatModal(){var e=getChatModal();e.style.setProperty('display','none','important');if(chatSyncTimer){clearInterval(chatSyncTimer);chatSyncTimer=null}}
-function toggleChatModal(){hideInspector();var e=getChatModal();if(isChatOpen()){hideChatModal();return}ensureContext();e.style.setProperty('display','flex','important');syncChatContent(true);if(!chatSyncTimer)chatSyncTimer=setInterval(function(){ensureContext();syncChatContent(false)},350)}
-function submitChatMessage(){var input=document.getElementById('cp-chat-input');if(!input)return;var msg=input.value.trim();if(!msg)return;var room=getRoom();try{if(room&&typeof room.send==='function')room.send(msg);else if(window.app&&typeof app.send==='function')app.send(msg);input.value='';setTimeout(function(){syncChatContent(false)},80)}catch(e){console.warn('Chat send failed',e)}}
-function refreshTargetButtons(){var sels='button[name="chooseTarget"],button[data-target],button.target-select,.target-select button',all=Array.prototype.slice.call(document.querySelectorAll(sels)).filter(function(b){return b.offsetParent!==null&&getComputedStyle(b).display!=='none'});targetButtons=all;targetIndex=Math.min(targetIndex,Math.max(0,targetButtons.length-1));targetButtons.forEach(function(b,i){b.style.outline=i===targetIndex?'2px solid #00ffcc':''});return all.length}
-function showTargetModal(){var n=refreshTargetButtons();if(!n){showInspector('🎯 Target Selection','<div><b>Doubles Target Selection</b></div><div style="margin-top:4px">No target buttons are exposed by this Showdown build yet.</div><div style="margin-top:4px;color:#aaa">Use the normal target controls on-screen, then Call/OK to confirm.</div>','target',1,false);return}var h='<div style="font-weight:bold;color:#00ffcc">Select Target</div>';targetButtons.forEach(function(b,i){h+='<div style="margin:2px 0;color:'+(i===targetIndex?'#fff':'#bbb')+'">'+(i===targetIndex?'▶ ':'')+esc(b.innerText||b.getAttribute('data-target')||('Target '+(i+1)))+'</div>'});showInspector('🎯 Doubles Target '+(targetIndex+1)+'/'+n,h,'target',targetIndex+1,false)}
-function selectTarget(delta){refreshTargetButtons();if(!targetButtons.length)return;targetIndex=(targetIndex+delta+targetButtons.length)%targetButtons.length;showTargetModal()}
-function confirmTarget(){refreshTargetButtons();if(targetButtons.length){targetButtons[targetIndex].click();hideInspector();targetButtons=[];return true}return false}
-function cancelMove(){var b=document.querySelector('button[name="undo"],button[name="clearMove"],button[name="chooseUndo"],button[value="undo"],button[value="cancel"]');if(b){b.click();return true}var r=getRoom();if(r&&typeof r.undo==='function'){r.undo();return true}if(r&&typeof r.send==='function'){r.send('/undo');return true}return false}
-function executeSwitch(mon,slot){var btns=document.querySelectorAll('button[name="chooseSwitch"],button.switchselect'),key=idOf(speciesName(mon)),b=null;for(var i=0;i<btns.length;i++){if(idOf(btns[i].innerText).indexOf(key)>=0){b=btns[i];break}}if(!b)for(var j=0;j<btns.length;j++){var v=parseInt(btns[j].value,10);if(v===slot||v===slot-1){b=btns[j];break}}if(b)b.click();else{var r=getRoom();if(r&&typeof r.choose==='function')r.choose('switch',slot);else if(r&&typeof r.send==='function')r.send('/choose switch '+slot)}}
-window.addEventListener('keydown',function(e){ensureContext();var key=e.key||'',code=e.keyCode||e.which||0,eventCode=e.code||'',isCall=key==='Call'||code===170||code===0,isEnter=key==='Enter'||code===13,isHash=key==='#'||code===192,isEsc=key==='Escape'||code===27,isUp=key==='ArrowUp'||code===38,isDown=key==='ArrowDown'||code===40,isLeft=key==='ArrowLeft'||code===37,isRight=key==='ArrowRight'||code===39;
-if(isChatOpen()){var input=document.getElementById('cp-chat-input'),content=document.getElementById('cp-chat-content');if(document.activeElement===input){if(isEnter||isCall){e.preventDefault();e.stopImmediatePropagation();submitChatMessage();return}if(isHash||isEsc){input.blur();hideChatModal();e.preventDefault();e.stopImmediatePropagation();return}return}if(isEnter||isCall){input.focus();e.preventDefault();e.stopImmediatePropagation();return}if(isUp&&content){content.scrollTop-=40;e.preventDefault();e.stopImmediatePropagation();return}if(isDown&&content){content.scrollTop+=40;e.preventDefault();e.stopImmediatePropagation();return}if(isHash||isEsc){hideChatModal();e.preventDefault();e.stopImmediatePropagation();return}if(key==='9'||code===57||eventCode==='Numpad9'||eventCode==='Digit9'){hideChatModal();e.preventDefault();e.stopImmediatePropagation();return}}
-if(activeInspectType==='target'){if(isLeft){selectTarget(-1);e.preventDefault();e.stopImmediatePropagation();return}if(isRight){selectTarget(1);e.preventDefault();e.stopImmediatePropagation();return}if(isCall||isEnter){confirmTarget();e.preventDefault();e.stopImmediatePropagation();return}if(isHash||isEsc){cancelMove();hideInspector();e.preventDefault();e.stopImmediatePropagation();return}}
-if(document.activeElement&&['INPUT','TEXTAREA'].includes(document.activeElement.tagName))return;
-if(activeInspectType&&(isLeft||isRight||isUp||isDown)){if(activeInspectType==='move'&&isDown){inspectMoveFullDescription(activeInspectIndex);e.preventDefault();e.stopImmediatePropagation();return}if(activeInspectType==='movefull'&&isDown){inspectMoveDamage(activeInspectIndex);e.preventDefault();e.stopImmediatePropagation();return}if(activeInspectType==='damage'&&isUp){inspectMoveFullDescription(activeInspectIndex);e.preventDefault();e.stopImmediatePropagation();return}if(activeInspectType==='movefull'&&isUp){inspectMove(activeInspectIndex);e.preventDefault();e.stopImmediatePropagation();return}if((activeInspectType==='move'||activeInspectType==='damage'||activeInspectType==='movefull')&&(isLeft||isRight)){var d=isRight?1:-1,nm=activeInspectIndex+d;if(nm>4)nm=1;if(nm<1)nm=4;inspectMove(nm);e.preventDefault();e.stopImmediatePropagation();return}if(isUp||isDown){var body=document.getElementById('cp-insp-body');if(body)body.scrollTop+=isDown?40:-40}else if(isLeft||isRight){var delta=isRight?1:-1;if(activeInspectType==='opponent'){var f=getFoeTeam();if(f.length)inspectOpponent((activeInspectIndex+delta+f.length-1)%f.length+1)}else if(activeInspectType==='myteam'){var m=getMyAliveTeam();if(m.length)inspectMyTeam((activeInspectIndex+delta+m.length-1)%m.length+1)}else if(activeInspectType==='preview')inspectPreview(activeInspectIndex===1?2:1)}e.preventDefault();e.stopImmediatePropagation();return}
-if(isCall||isEnter){if(activeInspectType==='move'){var mb=document.querySelector('button[name="chooseMove"][value="'+activeInspectIndex+'"]')||document.querySelectorAll('button[name="chooseMove"]')[activeInspectIndex-1];if(mb){mb.click();setTimeout(function(){if(document.querySelector('button[name="chooseTarget"],button[data-target],button.target-select,.target-select button'))showTargetModal();else hideInspector()},80)}e.preventDefault();e.stopImmediatePropagation();return}if(activeInspectType==='myteam'){var at=getMyAliveTeam()[activeInspectIndex-1];if(at&&at.mon&&!at.mon.active){executeSwitch(at.mon,at.slot);hideInspector();e.preventDefault();e.stopImmediatePropagation();return}}
-if(isHash){cancelMove();if(activeInspectType)hideInspector();e.preventDefault();e.stopImmediatePropagation();return}if(isEsc){if(activeInspectType)hideInspector();else cancelMove();e.preventDefault();e.stopImmediatePropagation();return}
-if(key==='0'||code===48){activeInspectType==='move'||activeInspectType==='movefull'||activeInspectType==='damage'?hideInspector():inspectMove((document.activeElement&&document.activeElement.name==='chooseMove'&&document.activeElement.value)||1);e.preventDefault();e.stopImmediatePropagation();return}
-if(key==='1'||code===49){activeInspectType==='opponent'?hideInspector():inspectOpponent(1);e.preventDefault();e.stopImmediatePropagation();return}
-if(key==='2'||code===50||eventCode==='Digit2'||eventCode==='Numpad2'){activeInspectType==='myteam'?hideInspector():inspectMyTeam(1);e.preventDefault();e.stopImmediatePropagation();return}
-if(key==='3'||code===51||eventCode==='Digit3'||eventCode==='Numpad3'){activeInspectType==='guide'?hideInspector():inspectGuide();e.preventDefault();e.stopImmediatePropagation();return}
-if(key==='4'||code===52||eventCode==='Digit4'||eventCode==='Numpad4'){activeInspectType==='preview'?hideInspector():inspectPreview(1);e.preventDefault();e.stopImmediatePropagation();return}
-if(key==='5'||code===53||eventCode==='Digit5'||eventCode==='Numpad5'){activeInspectType==='history'?hideInspector():inspectHistory();e.preventDefault();e.stopImmediatePropagation();return}
-if(key==='6'||code===54||eventCode==='Digit6'||eventCode==='Numpad6'){activeInspectType==='revealed'?hideInspector():inspectRevealed();e.preventDefault();e.stopImmediatePropagation();return}
-if(key==='9'||code===57||eventCode==='Digit9'||eventCode==='Numpad9'){toggleChatModal();e.preventDefault();e.stopImmediatePropagation();return}
-if(key==='*'||code===106||eventCode==='NumpadMultiply'){var g=document.querySelector('input[name="terastallize"],input[name="megaEvolution"],input[name="dynamax"],input[name="zmove"],button[name="terastallize"]');if(g)g.click();e.preventDefault();e.stopImmediatePropagation();return}
-},true);
-window.addEventListener('keyup',function(e){if(e.key==='ArrowLeft'||e.key==='ArrowRight'||e.keyCode===37||e.keyCode===39)e.stopImmediatePropagation()},true);
-function refreshModal(){if(!activeInspectType)return;if(activeInspectType==='opponent')inspectOpponent(activeInspectIndex);else if(activeInspectType==='myteam')inspectMyTeam(activeInspectIndex);else if(activeInspectType==='history')inspectHistory();else if(activeInspectType==='revealed')inspectRevealed();else if(activeInspectType==='preview')inspectPreview(activeInspectIndex)}
-function patchShowdown(){document.querySelectorAll('button[name="openChat"],button[name="openBattleLog"],button.battle-chat-toggle,.battle-chat-toggle,.chat-toggle').forEach(function(x){x.remove()});document.querySelectorAll('#tooltipwrapper,.tooltip,.tooltipwrapper,div[class*="tooltip"]').forEach(function(x){x.style.setProperty('display','none','important')});if(window.BattleTooltips)for(var k in BattleTooltips.prototype)if(/^show.*Tooltip$/.test(k))try{BattleTooltips.prototype[k]=function(){}}catch(e){}if(window.app){app.showTooltip=function(){};app.hideTooltip=function(){};app.focusPrevRoom=function(){};app.focusNextRoom=function(){}}}
-setInterval(function(){ensureContext();patchShowdown();updateRevealed()},250);
-function attemptConnect(){try{window.Config=window.Config||{};Config.server=Config.defaultserver={id:'showdown',host:'sim3.psim.us',port:443,httpport:8000,altport:80,ssl:true};patchShowdown();if(window.app&&typeof app.connect==='function'&&!app.connection){app.connect();return true}}catch(e){}return false}
-var poll=0,connectInterval=setInterval(function(){poll++;if(attemptConnect()||poll>200)clearInterval(connectInterval)},50);window.addEventListener('load',function(){setTimeout(attemptConnect,100)});
-})();
-</script>`;
+(function() {
+  try {
+    window.localStorage.setItem('showdown_crossteams', 'false');
+  } catch (e) {}
 
-function sanitizeResponseHeaders(originalHeaders){const h=new Headers(originalHeaders);h.delete('content-security-policy');h.delete('content-security-policy-report-only');h.delete('x-frame-options');h.delete('cross-origin-opener-policy');h.delete('cross-origin-embedder-policy');h.set('access-control-allow-origin','*');h.set('access-control-allow-credentials','true');return h}
-export default {async fetch(request,env,ctx){const url=new URL(request.url),publicHost=request.headers.get('host')||url.host;if(AD_TRACKER_PATTERN.test(url.pathname))return new Response('// Ad/Analytics disabled by proxy',{status:200,headers:{'Content-Type':'application/javascript; charset=utf-8','Cache-Control':'public, max-age=86400'}});if(url.pathname==='/config/config.js'){try{const r=await fetch(new Request(`${TARGET_WEB}/config/config.js`,{headers:{'User-Agent':request.headers.get('user-agent')||'Mozilla/5.0',Referer:`${TARGET_WEB}/`,Origin:TARGET_WEB}}));let t=await r.text();t+=`\nConfig.server = Config.defaultserver = { id:'showdown', host:'sim3.psim.us', port:443, httpport:8000, altport:80, ssl:true };\nConfig.routes=Config.routes||{};Config.routes.client=${JSON.stringify(publicHost)};\n`;return new Response(t,{status:200,headers:{'Content-Type':'application/javascript; charset=utf-8','Cache-Control':'no-store','Access-Control-Allow-Origin':'*'}})}catch(e){return new Response(`// Config proxy error: ${e.message}`,{status:500,headers:{'Content-Type':'application/javascript; charset=utf-8'}})}}const isSim=url.pathname.startsWith('/showdown'),targetBase=isSim?TARGET_SIM:TARGET_WEB,targetUrl=new URL(url.pathname+url.search,targetBase),fh=new Headers(request.headers);fh.set('Host',targetUrl.host);fh.set('Origin',TARGET_WEB);fh.set('Referer',`${TARGET_WEB}/`);const ip=request.headers.get('cf-connecting-ip')||request.headers.get('x-forwarded-for');if(ip){fh.set('x-forwarded-for',ip);fh.set('x-real-ip',ip.split(',')[0].trim())}const pr=new Request(targetUrl.toString(),{method:request.method,headers:fh,body:request.body,redirect:'manual'}),response=await fetch(pr);if(response.status===101)return response;const rh=sanitizeResponseHeaders(response.headers),loc=rh.get('location');if(loc&&publicHost)rh.set('location',loc.replace('https://play.pokemonshowdown.com',`https://${publicHost}`).replace('http://play.pokemonshowdown.com',`https://${publicHost}`));const sc=rh.get('set-cookie');if(sc)rh.set('set-cookie',sc.replace(/;\s*Domain=[^;]+/gi,''));const ct=rh.get('content-type')||'';if(ct.includes('text/html')){let html=await response.text();html=html.split('//play.pokemonshowdown.com/config/config.js').join(`//${publicHost}/config/config.js`);html=html.replace('<head>',`<head>${INJECTED_HEAD}`);html=html.includes('</body>')?html.replace('</body>',`${INJECTED_BODY}</body>`):html+INJECTED_BODY;rh.delete('content-length');rh.delete('content-encoding');return new Response(html,{status:response.status,statusText:response.statusText,headers:rh})}return new Response(response.body,{status:response.status,statusText:response.statusText,headers:rh})}};
+  var activeInspectType = null; // 'move' | 'opponent' | 'myteam' | 'guide'
+  var activeInspectIndex = 1;
+  var chatSyncTimer = null;
+
+  var TYPE_LIST = ['Normal','Fire','Water','Electric','Grass','Ice','Fighting','Poison','Ground','Flying','Psychic','Bug','Rock','Ghost','Dragon','Dark','Steel','Fairy'];
+
+  var TYPE_CHART = {
+    Normal: { Rock: 0.5, Ghost: 0, Steel: 0.5 },
+    Fire: { Fire: 0.5, Water: 0.5, Grass: 2, Ice: 2, Bug: 2, Rock: 0.5, Dragon: 0.5, Steel: 2 },
+    Water: { Fire: 2, Water: 0.5, Grass: 0.5, Ground: 2, Rock: 2, Dragon: 0.5 },
+    Electric: { Water: 2, Electric: 0.5, Grass: 0.5, Ground: 0, Flying: 2, Dragon: 0.5 },
+    Grass: { Fire: 0.5, Water: 2, Grass: 0.5, Poison: 0.5, Ground: 2, Flying: 0.5, Bug: 0.5, Rock: 2, Dragon: 0.5, Steel: 0.5 },
+    Ice: { Fire: 0.5, Water: 0.5, Grass: 2, Ice: 0.5, Ground: 2, Flying: 2, Dragon: 2, Steel: 0.5 },
+    Fighting: { Normal: 2, Ice: 2, Poison: 0.5, Flying: 0.5, Psychic: 0.5, Bug: 0.5, Rock: 2, Ghost: 0, Dark: 2, Steel: 2, Fairy: 0.5 },
+    Poison: { Grass: 2, Poison: 0.5, Ground: 0.5, Rock: 0.5, Ghost: 0.5, Steel: 0, Fairy: 2 },
+    Ground: { Fire: 2, Electric: 2, Grass: 0.5, Poison: 2, Flying: 0, Bug: 0.5, Rock: 2, Steel: 2 },
+    Flying: { Electric: 0.5, Grass: 2, Fighting: 2, Bug: 2, Rock: 0.5, Steel: 0.5 },
+    Psychic: { Fighting: 2, Poison: 2, Psychic: 0.5, Dark: 0, Steel: 0.5 },
+    Bug: { Fire: 0.5, Grass: 2, Fighting: 0.5, Poison: 0.5, Flying: 0.5, Psychic: 2, Ghost: 0.5, Steel: 0.5, Fairy: 0.5 },
+    Rock: { Fire: 2, Ice: 2, Fighting: 0.5, Ground: 0.5, Flying: 2, Bug: 2, Steel: 0.5 },
+    Ghost: { Normal: 0, Psychic: 2, Ghost: 2, Dark: 0.5 },
+    Dragon: { Dragon: 2, Steel: 0.5, Fairy: 0 },
+    Dark: { Fighting: 0.5, Psychic: 2, Ghost: 2, Dark: 0.5, Fairy: 0.5 },
+    Steel: { Fire: 0.5, Water: 0.5, Electric: 0.5, Ice: 2, Rock: 2, Steel: 0.5, Fairy: 2 },
+    Fairy: { Fire: 0.5, Fighting: 2, Poison: 0.5, Dragon: 2, Dark: 2, Steel: 0.5 }
+  };
+
+  function getEffectiveness(moveType, targetTypes) {
+    if (!moveType || !targetTypes || !targetTypes.length || !TYPE_CHART[moveType]) return 1;
+    var mult = 1;
+    for (var i = 0; i < targetTypes.length; i++) {
+      var t = targetTypes[i];
+      if (TYPE_CHART[moveType][t] !== undefined) mult *= TYPE_CHART[moveType][t];
+    }
+    return mult;
+  }
+
+  function formatMultiplierBadge(mult) {
+    if (mult === 0) return '<span class="eff-badge eff-immune">Immune (0×)</span>';
+    if (mult >= 2) return '<span class="eff-badge eff-super">Super Eff (' + mult + '×)</span>';
+    if (mult <= 0.5) return '<span class="eff-badge eff-resist">Not Eff (' + mult + '×)</span>';
+    return '<span class="eff-badge eff-neutral">Neutral (1×)</span>';
+  }
+
+  function getItemDesc(itemName) {
+    if (!itemName) return '';
+    var clean = itemName.replace(/\\s*\\(Lost\\)$/i, '');
+    var id = clean.toLowerCase().replace(/[^a-z0-9]/g, '');
+    var data = (window.BattleItems && BattleItems[id]) || (window.Dex && Dex.items ? Dex.items.get(clean) : null);
+    return (data && (data.shortDesc || data.desc)) ? (data.shortDesc || data.desc) : '';
+  }
+
+  function getAbilityDesc(abilityName) {
+    if (!abilityName) return '';
+    var clean = abilityName.replace(/\\s*\\(Possible\\)$/i, '');
+    var id = clean.toLowerCase().replace(/[^a-z0-9]/g, '');
+    var data = (window.BattleAbilities && BattleAbilities[id]) || (window.Dex && Dex.abilities ? Dex.abilities.get(clean) : null);
+    return (data && (data.shortDesc || data.desc)) ? (data.shortDesc || data.desc) : '';
+  }
+
+  function renderDefensiveProfile(types) {
+    var weak = [], resist = [], immune = [];
+    for (var i = 0; i < TYPE_LIST.length; i++) {
+      var atkT = TYPE_LIST[i];
+      var m = getEffectiveness(atkT, types);
+      if (m === 0) immune.push(atkT);
+      else if (m > 1) weak.push(atkT + ' (' + m + '×)');
+      else if (m < 1) resist.push(atkT + ' (' + m + '×)');
+    }
+    var html = '<div style="margin-top:3px;border-top:1px solid #333;padding-top:2px;"><b>Defensive Profile:</b></div>';
+    if (weak.length) html += '<div style="margin:1px 0;"><span style="color:#a5d6a7;font-weight:bold;">Weak:</span> ' + weak.join(', ') + '</div>';
+    if (resist.length) html += '<div style="margin:1px 0;"><span style="color:#ef9a9a;font-weight:bold;">Resist:</span> ' + resist.join(', ') + '</div>';
+    if (immune.length) html += '<div style="margin:1px 0;"><span style="color:#9e9e9e;font-weight:bold;">Immune:</span> ' + immune.join(', ') + '</div>';
+    return html;
+  }
+
+  function isMonAlive(p) {
+    if (!p) return false;
+    if (p.fainted) return false;
+    if (p.status === 'fnt') return false;
+    if (p.condition && (p.condition.includes('fnt') || p.condition === '0 fnt')) return false;
+    if (p.hp !== undefined && p.maxhp && p.hp === 0) return false;
+    return true;
+  }
+
+  function getInspectorEl() {
+    var el = document.getElementById('cp-inspector');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'cp-inspector';
+      el.style.cssText = 'position:fixed!important;top:50%!important;left:50%!important;transform:translate(-50%,-50%)!important;width:226px!important;max-height:270px!important;background:#0e121a!important;border:2px solid #ffd700!important;border-radius:6px!important;color:#fff!important;padding:5px 6px!important;z-index:2147483647!important;font-family:sans-serif!important;font-size:9.5px!important;line-height:1.25!important;box-shadow:0 0 20px rgba(0,0,0,0.95)!important;box-sizing:border-box!important;display:none;flex-direction:column!important;';
+      el.innerHTML = '<div id="cp-insp-title" style="font-size:10.5px;font-weight:bold;color:#ffd700;margin-bottom:2px;border-bottom:1px solid #333;padding-bottom:2px;"></div>' +
+                     '<div id="cp-insp-body" style="color:#e0e0e0;flex:1!important;max-height:205px!important;overflow-y:auto!important;margin-bottom:3px;padding-right:2px;word-break:break-word;"></div>' +
+                     '<div id="cp-insp-footer" style="font-size:8.5px;color:#00ffcc;font-weight:bold;text-align:center;border-top:1px solid #333;padding-top:2px;"></div>';
+      document.body.appendChild(el);
+    }
+    return el;
+  }
+
+  function hideInspector() {
+    var el = getInspectorEl();
+    el.style.setProperty('display', 'none', 'important');
+    activeInspectType = null;
+  }
+
+  function showInspector(title, bodyHtml, type, index, isSelfActive) {
+    hideChatModal();
+    var el = getInspectorEl();
+    var titleEl = document.getElementById('cp-insp-title');
+    var bodyEl = document.getElementById('cp-insp-body');
+    var footEl = document.getElementById('cp-insp-footer');
+
+    if (titleEl) titleEl.innerHTML = title;
+    if (bodyEl) {
+      bodyEl.innerHTML = bodyHtml;
+      bodyEl.scrollTop = 0;
+    }
+    if (footEl) {
+      if (type === 'move') {
+        footEl.innerHTML = '[CALL/OK] Use Move | [◄►] Cycle Moves | [▲▼] Scroll | [#] Cancel';
+      } else if (type === 'opponent') {
+        footEl.innerHTML = '[◄►] Cycle Foe | [▲▼] Scroll | [#] Close';
+      } else if (type === 'myteam') {
+        if (isSelfActive) {
+          footEl.innerHTML = '<span style="color:#ffcc00;">[CURRENTLY IN BATTLE]</span> | [◄►] Cycle | [▲▼] Scroll | [#] Close';
+        } else {
+          footEl.innerHTML = '[CALL/OK] Switch In | [◄►] Cycle | [▲▼] Scroll | [#] Close';
+        }
+      } else if (type === 'guide') {
+        footEl.innerHTML = '[▲▼] Scroll Guide | [#] Close';
+      }
+    }
+
+    el.style.setProperty('display', 'flex', 'important');
+    activeInspectType = type;
+    activeInspectIndex = Number(index) || 1;
+  }
+
+  function getChatModalEl() {
+    var el = document.getElementById('cp-chat-modal');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'cp-chat-modal';
+      el.style.cssText = 'position:fixed!important;top:50%!important;left:50%!important;transform:translate(-50%,-50%)!important;width:226px!important;height:270px!important;background:#0c1016!important;border:2px solid #00ffcc!important;border-radius:6px!important;color:#e0e0e0!important;padding:6px!important;z-index:2147483646!important;font-family:sans-serif!important;font-size:10px!important;line-height:1.25!important;box-shadow:0 0 22px rgba(0,0,0,0.98)!important;box-sizing:border-box!important;display:none;flex-direction:column!important;';
+      el.innerHTML = '<div style="font-size:10.5px;font-weight:bold;color:#00ffcc;border-bottom:1px solid #333;padding-bottom:2px;margin-bottom:3px;display:flex;justify-content:space-between;"><span>💬 Battle Log & Chat</span><span style="color:#888;font-size:9px;">[#] Close</span></div>' +
+                     '<div id="cp-chat-content" style="flex:1!important;overflow-y:auto!important;margin-bottom:4px;padding-right:2px;word-break:break-word;"></div>' +
+                     '<form id="cp-chat-form" style="display:flex;gap:3px;margin:0;padding:0;">' +
+                       '<input type="text" id="cp-chat-input" placeholder="Type msg..." style="flex:1;min-width:0;background:#18202c;border:1px solid #00ffcc;border-radius:3px;color:#fff;font-size:9.5px;padding:2px 4px;box-sizing:border-box;" />' +
+                       '<button type="submit" style="background:#00aa88;border:none;border-radius:3px;color:#fff;font-size:9px;font-weight:bold;padding:0 6px;cursor:pointer;">Send</button>' +
+                     '</form>' +
+                     '<div style="font-size:8px;color:#777;text-align:center;margin-top:2px;">[D-Pad Up/Down] Scroll &nbsp;|&nbsp; [OK] Type/Send</div>';
+      document.body.appendChild(el);
+
+      var form = document.getElementById('cp-chat-form');
+      if (form) {
+        form.addEventListener('submit', function(ev) {
+          ev.preventDefault();
+          submitChatMessage();
+        });
+      }
+    }
+    return el;
+  }
+
+  function isChatModalOpen() {
+    var el = getChatModalEl();
+    return el && el.style.display === 'flex';
+  }
+
+  function syncChatContent() {
+    var contentEl = document.getElementById('cp-chat-content');
+    if (!contentEl) return;
+
+    var logSources = [
+      document.querySelector('.battle-log .inner'),
+      document.querySelector('.battle-log'),
+      document.querySelector('.chat-log .inner'),
+      document.querySelector('.chat-log')
+    ];
+
+    var sourceEl = null;
+    for (var i = 0; i < logSources.length; i++) {
+      if (logSources[i] && logSources[i].innerHTML.trim().length > 0) {
+        sourceEl = logSources[i];
+        break;
+      }
+    }
+
+    if (sourceEl) {
+      var isNearBottom = (contentEl.scrollHeight - contentEl.scrollTop - contentEl.clientHeight) < 45;
+      if (contentEl.innerHTML !== sourceEl.innerHTML) {
+        contentEl.innerHTML = sourceEl.innerHTML;
+        if (isNearBottom) {
+          contentEl.scrollTop = contentEl.scrollHeight;
+        }
+      }
+    } else if (contentEl.children.length === 0) {
+      contentEl.innerHTML = '<div style="color:#777;padding:10px 0;text-align:center;">No log or messages yet.</div>';
+    }
+  }
+
+  function submitChatMessage() {
+    var input = document.getElementById('cp-chat-input');
+    if (!input) return;
+    var msg = input.value.trim();
+    if (!msg) return;
+
+    var room = getBattleRoom();
+    if (room && typeof room.send === 'function') room.send(msg);
+    else if (window.app && typeof app.send === 'function') app.send(msg);
+
+    input.value = '';
+    setTimeout(syncChatContent, 100);
+  }
+
+  function hideChatModal() {
+    var el = getChatModalEl();
+    el.style.setProperty('display', 'none', 'important');
+    if (chatSyncTimer) {
+      clearInterval(chatSyncTimer);
+      chatSyncTimer = null;
+    }
+  }
+
+  function toggleChatModal() {
+    hideInspector();
+    var el = getChatModalEl();
+    if (isChatModalOpen()) {
+      hideChatModal();
+      return;
+    }
+
+    el.style.setProperty('display', 'flex', 'important');
+    syncChatContent();
+    var contentEl = document.getElementById('cp-chat-content');
+    if (contentEl) contentEl.scrollTop = contentEl.scrollHeight;
+
+    if (!chatSyncTimer) {
+      chatSyncTimer = setInterval(syncChatContent, 400);
+    }
+  }
+
+  function getBattleRoom() {
+    if (!window.app) return null;
+    var room = app.curRoom || app.curSideRoom;
+    if (room && room.battle) return room;
+    if (app.rooms) {
+      for (var k in app.rooms) {
+        if (app.rooms[k] && app.rooms[k].battle) return app.rooms[k];
+      }
+    }
+    return room || null;
+  }
+
+  function getBattleRequest() {
+    var room = getBattleRoom();
+    if (room && room.request) return room.request;
+    if (room && room.battle && room.battle.request) return room.battle.request;
+    return null;
+  }
+
+  function cancelSelectedMove() {
+    var undoBtn = document.querySelector('button[name="undo"], button[name="clearMove"], button[name="chooseUndo"], button[value="undo"], button[value="cancel"]');
+    if (undoBtn) {
+      undoBtn.click();
+      return true;
+    }
+    var room = getBattleRoom();
+    if (room) {
+      if (typeof room.undo === 'function') {
+        room.undo();
+        return true;
+      }
+      if (typeof room.send === 'function') {
+        room.send('/undo');
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function executeSwitch(mon, slot) {
+    var monSpecies = mon ? (mon.details ? mon.details.split(',')[0].trim().toLowerCase() : (mon.name || mon.species || '').trim().toLowerCase()) : '';
+    var switchBtns = document.querySelectorAll('button[name="chooseSwitch"], button.switchselect');
+    var targetBtn = null;
+
+    for (var s = 0; s < switchBtns.length; s++) {
+      var btnText = switchBtns[s].innerText.toLowerCase();
+      if (monSpecies && btnText.includes(monSpecies)) {
+        targetBtn = switchBtns[s];
+        break;
+      }
+    }
+
+    if (!targetBtn) {
+      for (var s = 0; s < switchBtns.length; s++) {
+        var btnVal = parseInt(switchBtns[s].value, 10);
+        if (btnVal === slot || btnVal === (slot - 1)) {
+          targetBtn = switchBtns[s];
+          break;
+        }
+      }
+    }
+
+    if (targetBtn) {
+      targetBtn.click();
+    } else {
+      var room = getBattleRoom();
+      if (room && typeof room.choose === 'function') {
+        room.choose('switch', slot);
+      } else if (room && typeof room.send === 'function') {
+        room.send('/choose switch ' + slot);
+      }
+    }
+  }
+
+  function getOpponentActive() {
+    var room = getBattleRoom();
+    if (!room || !room.battle) return null;
+    var b = room.battle;
+
+    if (b.farSide && b.farSide.active && b.farSide.active[0]) return b.farSide.active[0];
+    if (b.yourSide && b.yourSide.active && b.yourSide.active[0]) return b.yourSide.active[0];
+    if (b.foe && b.foe.active && b.foe.active[0]) return b.foe.active[0];
+
+    if (b.sides && b.sides.length) {
+      var myIndex = (b.mySide && b.mySide.n !== undefined) ? b.mySide.n : 0;
+      var foeIndex = (myIndex === 0) ? 1 : 0;
+      if (b.sides[foeIndex] && b.sides[foeIndex].active && b.sides[foeIndex].active[0]) {
+        return b.sides[foeIndex].active[0];
+      }
+    }
+
+    if (b.p1 && b.p2) {
+      var mySideId = b.mySide ? b.mySide.id : 'p1';
+      var foeObj = (mySideId === 'p1') ? b.p2 : b.p1;
+      if (foeObj && foeObj.active && foeObj.active[0]) return foeObj.active[0];
+    }
+    return null;
+  }
+
+  // Key 1: Only alive opponent Pokémon
+  function getFoeTeam() {
+    var room = getBattleRoom();
+    if (!room || !room.battle) return [];
+    var b = room.battle;
+    var foeSide = (b.mySide && b.mySide.foe) || b.farSide || (b.sides && (b.mySide && b.mySide.n === 0 ? b.sides[1] : b.sides[0])) || b.foe;
+    if (!foeSide) return [];
+
+    var active = (foeSide.active && foeSide.active[0]) ? foeSide.active[0] : getOpponentActive();
+    var list = [];
+    if (active && isMonAlive(active)) list.push(active);
+
+    if (foeSide.pokemon && foeSide.pokemon.length) {
+      for (var i = 0; i < foeSide.pokemon.length; i++) {
+        var p = foeSide.pokemon[i];
+        if (p && p !== active && list.indexOf(p) === -1 && isMonAlive(p)) {
+          list.push(p);
+        }
+      }
+    }
+    return list;
+  }
+
+  // Key 2: Only alive teammates (Active + Bench)
+  function getMyAliveTeam() {
+    var req = getBattleRequest();
+    var list = [];
+    if (req && req.side && req.side.pokemon && req.side.pokemon.length) {
+      for (var i = 0; i < req.side.pokemon.length; i++) {
+        var p = req.side.pokemon[i];
+        if (isMonAlive(p)) {
+          list.push({ mon: p, slot: i + 1 });
+        }
+      }
+      return list;
+    }
+    var room = getBattleRoom();
+    if (room && room.battle) {
+      var b = room.battle;
+      var mySide = b.yourSide || (b.sides && (b.mySide && b.mySide.n !== undefined ? b.sides[b.mySide.n] : b.sides[0])) || b.mySide;
+      if (mySide && mySide.pokemon) {
+        for (var j = 0; j < mySide.pokemon.length; j++) {
+          var mon = mySide.pokemon[j];
+          if (isMonAlive(mon)) {
+            list.push({ mon: mon, slot: j + 1 });
+          }
+        }
+      }
+    }
+    return list;
+  }
+
+  function getOpponentTypes(customFoe) {
+    var foe = customFoe || getOpponentActive();
+    if (!foe) return [];
+
+    if (foe.terastallized && typeof foe.terastallized === 'string' && foe.terastallized !== 'Stellar') {
+      return [foe.terastallized];
+    }
+    if (foe.terastallized && foe.teraType && foe.teraType !== 'Stellar') {
+      return [foe.teraType];
+    }
+
+    if (foe.types && foe.types.length) return foe.types;
+    if (foe.speciesData && foe.speciesData.types) return foe.speciesData.types;
+
+    var raw = (foe.species || foe.name || '').replace(/^p[12]:\\s*/i, '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    if (window.BattlePokedex && BattlePokedex[raw] && BattlePokedex[raw].types) {
+      return BattlePokedex[raw].types;
+    }
+    if (window.Dex && Dex.species && Dex.species.get(raw)) {
+      return Dex.species.get(raw).types || [];
+    }
+    
+    // Fallback: try using the original name/details without stripping characters
+    var fallbackName = (foe.details ? foe.details.split(',')[0] : (foe.species || foe.name || '')).trim();
+    if (fallbackName && window.Dex && Dex.species) {
+      var speciesData = Dex.species.get(fallbackName);
+      if (speciesData && speciesData.types) return speciesData.types;
+    }
+    return [];
+  }
+
+  function getKnownMoves(pokemon) {
+    if (!pokemon) return [];
+    var list = [];
+    var seen = Object.create(null);
+
+    function add(m) {
+      if (!m) return;
+      var name = '';
+      if (typeof m === 'string') name = m;
+      else if (Array.isArray(m)) name = m[0] || '';
+      else if (typeof m === 'object') name = m.name || m.move || m.id || '';
+      name = String(name).trim();
+      if (!name) return;
+      var id = name.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (!id || seen[id]) return;
+      seen[id] = true;
+      list.push(name);
+    }
+
+    if (Array.isArray(pokemon.moveTrack)) pokemon.moveTrack.forEach(add);
+    if (Array.isArray(pokemon.moves)) pokemon.moves.forEach(add);
+
+    return list;
+  }
+
+  window.addEventListener('keyup', function(e) {
+    var code = e.keyCode || e.which;
+    var isHorizontal = (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || code === 37 || code === 39);
+    if (isHorizontal) {
+      e.stopImmediatePropagation();
+    }
+  }, true);
+
+  window.addEventListener('keydown', function(e) {
+    var key = e.key || '';
+    var code = e.keyCode || e.which || 0;
+    var eventCode = e.code || '';
+
+    var isCall = (key === 'Call' || code === 0 || code === 170);
+    var isEnter = (key === 'Enter' || code === 13);
+    var isHash = (key === '#' || key === 'Hash' || key === 'Pound' || code === 192);
+    var isEscape = (key === 'Escape' || code === 27);
+
+    if (isCall) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }
+
+    var isUp = (key === 'ArrowUp' || code === 38);
+    var isDown = (key === 'ArrowDown' || code === 40);
+
+    // --- CHAT MODAL INTERACTION ---
+    if (isChatModalOpen()) {
+      var chatInput = document.getElementById('cp-chat-input');
+      var contentEl = document.getElementById('cp-chat-content');
+
+      if (document.activeElement === chatInput) {
+        if (isEnter || isCall) {
+          submitChatMessage();
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          return;
+        }
+        if (isHash || isEscape) {
+          chatInput.blur();
+          hideChatModal();
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          return;
+        }
+        return;
+      }
+
+      if (isUp && contentEl) {
+        contentEl.scrollTop -= 35;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
+      if (isDown && contentEl) {
+        contentEl.scrollTop += 35;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
+      if (isEnter || isCall) {
+        if (chatInput) chatInput.focus();
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
+      if (isHash || isEscape || key === '9' || code === 57 || eventCode === 'Digit9' || eventCode === 'Numpad9') {
+        hideChatModal();
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
+    }
+
+    if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+
+    var isLeft = (key === 'ArrowLeft' || code === 37);
+    var isRight = (key === 'ArrowRight' || code === 39);
+
+    // --- INSPECTOR DPAD INTERACTION (◄►: Cycle | ▲▼: Scroll) ---
+    if (activeInspectType && (isLeft || isRight || isUp || isDown)) {
+      if (isLeft || isRight) {
+        var delta = isRight ? 1 : -1;
+        if (activeInspectType === 'move') {
+          var nextMove = activeInspectIndex + delta;
+          if (nextMove > 4) nextMove = 1;
+          if (nextMove < 1) nextMove = 4;
+          inspectMove(nextMove);
+        } else if (activeInspectType === 'opponent') {
+          var foeTeam = getFoeTeam();
+          if (foeTeam.length > 0) {
+            var nextFoe = activeInspectIndex + delta;
+            if (nextFoe > foeTeam.length) nextFoe = 1;
+            if (nextFoe < 1) nextFoe = foeTeam.length;
+            inspectOpponent(nextFoe);
+          }
+        } else if (activeInspectType === 'myteam') {
+          var aliveTeam = getMyAliveTeam();
+          if (aliveTeam.length > 0) {
+            var nextMon = activeInspectIndex + delta;
+            if (nextMon > aliveTeam.length) nextMon = 1;
+            if (nextMon < 1) nextMon = aliveTeam.length;
+            inspectMyTeam(nextMon);
+          }
+        }
+      } else if (isUp || isDown) {
+        var bodyEl = document.getElementById('cp-insp-body');
+        if (bodyEl) {
+          bodyEl.scrollTop += isDown ? 35 : -35;
+        }
+      }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
+
+    if (isLeft || isRight) {
+      e.stopImmediatePropagation();
+    }
+
+    // --- CALL / ENTER -> EXECUTE ACTION (Move or Switch) ---
+    if (isCall || isEnter) {
+      if (activeInspectType === 'move') {
+        var moveBtn = document.querySelector('button[name="chooseMove"][value="' + activeInspectIndex + '"]') ||
+                      document.querySelectorAll('button[name="chooseMove"]')[activeInspectIndex - 1];
+        if (moveBtn) moveBtn.click();
+        hideInspector();
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      } else if (activeInspectType === 'myteam') {
+        var aliveTeam = getMyAliveTeam();
+        var target = aliveTeam[activeInspectIndex - 1];
+        if (target && target.mon) {
+          if (!target.mon.active) {
+            executeSwitch(target.mon, target.slot);
+            hideInspector();
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            return;
+          }
+        }
+      }
+    }
+
+    // --- # -> CANCEL SELECTED MOVE / UNDO ---
+    if (isHash) {
+      cancelSelectedMove();
+      if (activeInspectType) {
+        hideInspector();
+      }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
+
+    // --- ESCAPE -> CLOSE MODAL OR UNDO ---
+    if (isEscape) {
+      if (activeInspectType) {
+        hideInspector();
+      } else {
+        cancelSelectedMove();
+      }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
+
+    // --- 0 -> MOVE SELECTION MODAL ONLY ---
+    if (key === '0' || code === 48) {
+      if (activeInspectType === 'move') {
+        hideInspector();
+      } else {
+        var focused = document.activeElement;
+        if (focused && focused.name === 'chooseMove') {
+          inspectMove(focused.value || '1');
+        } else {
+          inspectMove('1');
+        }
+      }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
+
+    // --- 1 -> OPPONENT ALIVE ROSTER & WEAKNESSES ---
+    if (key === '1' || code === 49) {
+      if (activeInspectType === 'opponent') {
+        hideInspector();
+      } else {
+        inspectOpponent(1);
+      }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
+
+    // --- 2 -> MY TEAM & DIRECT SWITCH MENU (ALIVE MONS ONLY) ---
+    if (key === '2' || code === 50 || eventCode === 'Digit2' || eventCode === 'Numpad2') {
+      if (activeInspectType === 'myteam') {
+        hideInspector();
+      } else {
+        inspectMyTeam(1);
+      }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
+
+    // --- 3 -> CONTROL GUIDE MODAL ---
+    if (key === '3' || code === 51 || eventCode === 'Digit3' || eventCode === 'Numpad3') {
+      if (activeInspectType === 'guide') {
+        hideInspector();
+      } else {
+        inspectGuide();
+      }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
+
+    // --- 9 -> TOGGLE FLOATING CHAT & LOG MODAL ---
+    if (key === '9' || code === 57 || eventCode === 'Digit9' || eventCode === 'Numpad9') {
+      toggleChatModal();
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
+
+    // --- * -> TOGGLE TERASTALLIZE / GIMMICK ---
+    if (key === '*' || code === 106 || eventCode === 'NumpadMultiply') {
+      var tera = document.querySelector('input[name="terastallize"], input[name="megaEvolution"], input[name="dynamax"], input[name="zmove"], button[name="terastallize"]');
+      if (tera) {
+        tera.click();
+      }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
+  }, true);
+
+  // 0 Menu: Move Selection Only
+  function inspectMove(index) {
+    index = Number(index) || 1;
+    var moveBtn = document.querySelector('button[name="chooseMove"][value="' + index + '"]') ||
+                  document.querySelectorAll('button[name="chooseMove"]')[index - 1];
+
+    var req = getBattleRequest();
+    var activeMon = req && req.side && req.side.pokemon && (req.side.pokemon.find(function(p) { return p.active; }) || req.side.pokemon[0]);
+    var reqMove = req && req.active && req.active[0] && req.active[0].moves && req.active[0].moves[index - 1];
+
+    var rawName = (moveBtn && (moveBtn.getAttribute('data-move') || moveBtn.innerText.split('\\n')[0])) || (reqMove && reqMove.move) || ('Move ' + index);
+    var moveId = rawName.toLowerCase().replace(/[^a-z0-9]/g, '');
+    var dexData = (window.BattleMovedex && BattleMovedex[moveId]) ? BattleMovedex[moveId] : (window.Dex && Dex.moves ? Dex.moves.get(rawName) : null);
+
+    var foeTypes = getOpponentTypes();
+    var foe = getOpponentActive();
+    var foeName = foe ? (foe.name || foe.species || 'Opponent').replace(/^p[12]:\\s*/i, '') : 'Opponent';
+
+    var moveName = (dexData && dexData.name) || (reqMove && reqMove.move) || rawName;
+    var type = (dexData && dexData.type) || 'Normal';
+    var category = (dexData && dexData.category) || '';
+    var bp = (dexData && (dexData.basePower || '—')) || '—';
+    var acc = (dexData && (dexData.accuracy === true ? '—' : (dexData.accuracy + '%'))) || '—';
+    var ppText = reqMove && reqMove.pp !== undefined ? (reqMove.pp + '/' + reqMove.maxpp) : '—';
+
+    var mult = (category === 'Status') ? 1 : getEffectiveness(type, foeTypes);
+    var effHtml = (category === 'Status') ? '<span class="eff-badge eff-neutral">Status</span>' : formatMultiplierBadge(mult);
+
+    var activeSpecies = activeMon ? activeMon.details.split(',')[0] : 'Active';
+    var activeSpeciesKey = activeSpecies.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    var activeDex = (window.BattlePokedex && BattlePokedex[activeSpeciesKey]) || (window.Dex && Dex.species ? Dex.species.get(activeSpeciesKey) : null);
+    var activeTypes = (activeMon && activeMon.types) || (activeDex && activeDex.types) || [];
+    var activeSpeed = (activeMon && activeMon.stats && activeMon.stats.spe) ? activeMon.stats.spe : (activeDex && activeDex.baseStats ? activeDex.baseStats.spe : '—');
+
+    var html = '';
+    html += '<div style="background:rgba(255,255,255,0.06);padding:2px 4px;border-radius:3px;margin-bottom:3px;font-size:9.5px;">' +
+            '<b>' + activeSpecies + '</b> (' + (activeTypes.join('/') || '—') + (activeMon && activeMon.teraType ? ' [' + activeMon.teraType + ']' : '') + ') &nbsp;|&nbsp; <b>Spe:</b> ' + activeSpeed + '</div>';
+
+    html += '<div><b>Type:</b> ' + type + ' ' + (category ? '(' + category + ')' : '') + '</div>';
+    html += '<div><b>BP:</b> ' + bp + ' &nbsp;|&nbsp; <b>Acc:</b> ' + acc + ' &nbsp;|&nbsp; <b>PP:</b> ' + ppText + '</div>';
+    html += '<div style="margin: 3px 0;"><b>Vs ' + foeName + ' (' + (foeTypes.join('/') || '—') + '):</b><br>' + effHtml + '</div>';
+
+    if (dexData && (dexData.shortDesc || dexData.desc)) {
+      html += '<div style="margin-top:2px;color:#bbb;font-size:9px;">' + (dexData.shortDesc || dexData.desc) + '</div>';
+    }
+
+    if (reqMove && reqMove.disabled) {
+      html += '<div style="color:#ff5555;font-weight:bold;margin-top:2px;">[DISABLED]</div>';
+    }
+
+    showInspector('⚡ Move ' + index + '/4: ' + moveName, html, 'move', index, false);
+  }
+
+  // 1 Menu: Opponent Alive Roster Only
+  function inspectOpponent(index) {
+    index = Number(index) || 1;
+    var foeTeam = getFoeTeam();
+    if (!foeTeam.length) {
+      showInspector('🎯 Opponent Team', '<div>No alive opponent Pokémon revealed yet.</div>', 'opponent', 1, false);
+      return;
+    }
+
+    if (index > foeTeam.length) index = 1;
+    if (index < 1) index = foeTeam.length;
+
+    var foe = foeTeam[index - 1];
+    var foeTypes = getOpponentTypes(foe);
+
+    var cleanName = (foe.name || foe.species || 'Unknown').replace(/^p[12]:\\s*/i, '');
+    var speciesKey = cleanName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    var pDex = (window.BattlePokedex && BattlePokedex[speciesKey]) || (window.Dex && Dex.species ? Dex.species.get(speciesKey) : {});
+    var baseSpe = (pDex.baseStats && pDex.baseStats.spe) || (pDex.spe) || 0;
+
+    var level = 100;
+    if (foe.level) {
+      level = Number(foe.level);
+    } else if (foe.details) {
+      var lvlMatch = foe.details.match(/L(\\d+)/);
+      if (lvlMatch) level = parseInt(lvlMatch[1], 10);
+    }
+
+    var speedText = '—';
+    if (baseSpe > 0) {
+      var minMin = Math.floor((Math.floor((2 * baseSpe) * level / 100) + 5) * 0.9);
+      var minNeutral = Math.floor((2 * baseSpe + 31) * level / 100) + 5;
+      var maxMax = Math.floor((Math.floor((2 * baseSpe + 94) * level / 100) + 5) * 1.1);
+
+      var speBoost = (foe.boosts && foe.boosts.spe) ? foe.boosts.spe : 0;
+      if (speBoost !== 0) {
+        var mult = (speBoost > 0) ? (2 + speBoost) / 2 : 2 / (2 - speBoost);
+        minMin = Math.floor(minMin * mult);
+        minNeutral = Math.floor(minNeutral * mult);
+        maxMax = Math.floor(maxMax * mult);
+      }
+
+      var boostLabel = speBoost !== 0 ? ' (' + (speBoost > 0 ? '+' : '') + speBoost + ')' : '';
+      speedText = minNeutral + ' - ' + maxMax + boostLabel + ' <span style="color:#888;font-size:8.5px;">(Min ' + minMin + ', Base ' + baseSpe + ')</span>';
+    }
+
+    var rawItem = foe.item || (foe.prevItem ? (foe.prevItem + ' (Lost)') : '');
+    var itemDesc = getItemDesc(rawItem);
+    var itemText = rawItem || 'Unrevealed / None';
+
+    var rawAbility = foe.ability || '';
+    if (!rawAbility && pDex && pDex.abilities) {
+      var abList = [];
+      for (var k in pDex.abilities) abList.push(pDex.abilities[k]);
+      rawAbility = abList.join(', ') + ' (Possible)';
+    }
+    var abilityDesc = getAbilityDesc(rawAbility.split(',')[0]);
+    var abilityText = rawAbility || 'Unknown';
+
+    var teraLabel = foe.terastallized ? ' <span style="color:#00ffcc;font-weight:bold;">[Tera: ' + (foe.teraType || foe.terastallized) + ']</span>' : '';
+    var statusLabel = foe.active ? ' <span style="color:#00ffcc;font-weight:bold;">[ACTIVE]</span>' : '';
+
+    var moves = getKnownMoves(foe);
+
+    var html = '';
+    html += '<div><b>Types:</b> ' + (foeTypes.join(' / ') || 'Unknown') + teraLabel + statusLabel + '</div>';
+    html += '<div><b>Speed (Lv ' + level + '):</b> ' + speedText + '</div>';
+    html += '<div style="margin-top:2px;"><b>Item:</b> ' + itemText + '</div>';
+    if (itemDesc) html += '<div style="color:#aaa;font-size:8.5px;margin-bottom:2px;">↳ ' + itemDesc + '</div>';
+    html += '<div><b>Ability:</b> ' + abilityText + '</div>';
+    if (abilityDesc) html += '<div style="color:#aaa;font-size:8.5px;margin-bottom:2px;">↳ ' + abilityDesc + '</div>';
+
+    if (moves.length) {
+      html += '<div style="margin-top:3px;border-top:1px solid #333;padding-top:2px;"><b>Revealed Moves:</b></div>';
+      for (var m = 0; m < moves.length; m++) {
+        var mName = moves[m];
+        var mId = mName.toLowerCase().replace(/[^a-z0-9]/g, '');
+        var mData = (window.BattleMovedex && BattleMovedex[mId]) || (window.Dex && Dex.moves ? Dex.moves.get(mName) : null);
+        var mType = (mData && mData.type) || '—';
+        var mCat = (mData && mData.category) ? '(' + mData.category[0] + ')' : '';
+        var mBp = (mData && mData.basePower) ? mData.basePower : '—';
+        html += '<div style="font-size:9px;margin:1px 0;">• ' + mName + ' <span style="color:#ffd700;">[' + mType + ' ' + mCat + ']</span> (BP: ' + mBp + ')</div>';
+      }
+    } else {
+      html += '<div style="margin-top:3px;color:#888;font-size:9px;"><b>Revealed Moves:</b> None revealed yet</div>';
+    }
+
+    html += renderDefensiveProfile(foeTypes);
+
+    showInspector('🎯 Opponent ' + index + '/' + foeTeam.length + ': ' + cleanName, html, 'opponent', index, false);
+  }
+
+  // 2 Menu: My Team & Direct Switch Menu (Alive Only, Moves + Effectiveness + Direct Swap)
+  function inspectMyTeam(index) {
+    index = Number(index) || 1;
+    var aliveTeam = getMyAliveTeam();
+    if (!aliveTeam.length) {
+      showInspector('🛡️ My Team & Switch', '<div>No alive Pokémon available.</div>', 'myteam', 1, false);
+      return;
+    }
+
+    if (index > aliveTeam.length) index = 1;
+    if (index < 1) index = aliveTeam.length;
+
+    var item = aliveTeam[index - 1];
+    var mon = item.mon;
+    var slot = item.slot;
+
+    var rawName = mon ? (mon.details ? mon.details.split(',')[0] : (mon.name || mon.species || ('Slot ' + slot))) : ('Slot ' + slot);
+    var speciesKey = rawName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    var pDex = (window.BattlePokedex && BattlePokedex[speciesKey]) || (window.Dex && Dex.species ? Dex.species.get(speciesKey) : {});
+
+    var monTypes = (mon && mon.types) || (pDex && pDex.types) || [];
+    if (mon && mon.teraType) {
+      monTypes = (mon.terastallized && mon.terastallized !== 'Stellar') ? [mon.terastallized] : monTypes;
+    }
+
+    var s = (mon && mon.stats) ? mon.stats : ((pDex && pDex.baseStats) ? pDex.baseStats : {});
+    var itemDesc = getItemDesc(mon ? mon.item : '');
+    var abilityDesc = getAbilityDesc(mon ? mon.ability : '');
+
+    var statusBadge = mon.active
+      ? ' <span style="color:#00ffcc;font-weight:bold;">[ACTIVE IN BATTLE]</span>'
+      : ' <span style="color:#ffd700;font-weight:bold;">[BENCH - PRESS CALL/OK TO SWITCH]</span>';
+
+    var html = '';
+    html += '<div><b>Types:</b> ' + (monTypes.join(' / ') || 'Unknown') + (mon && mon.teraType ? ' [Tera: ' + mon.teraType + ']' : '') + statusBadge + '</div>';
+
+    // Full Stat Matrix (HP, Spe, Atk, Def, SpA, SpD)
+    html += '<div style="background:rgba(255,255,255,0.06);padding:2px 4px;border-radius:3px;margin:2px 0;font-size:9px;">' +
+            '<b>HP:</b> ' + (mon ? (mon.condition || '—') : '—') + ' &nbsp;|&nbsp; <b>Spe:</b> <span style="color:#00ffcc;font-weight:bold;">' + (s.spe || '—') + '</span><br>' +
+            '<b>Atk:</b> ' + (s.atk || '—') + ' | <b>Def:</b> ' + (s.def || '—') + ' | <b>SpA:</b> ' + (s.spa || '—') + ' | <b>SpD:</b> ' + (s.spd || '—') +
+            '</div>';
+
+    html += '<div style="margin-top:2px;"><b>Item:</b> ' + (mon && mon.item ? mon.item : 'None') + '</div>';
+    if (itemDesc) html += '<div style="color:#aaa;font-size:8.5px;margin-bottom:2px;">↳ ' + itemDesc + '</div>';
+    html += '<div><b>Ability:</b> ' + (mon && mon.ability ? mon.ability : 'Unknown') + '</div>';
+    if (abilityDesc) html += '<div style="color:#aaa;font-size:8.5px;margin-bottom:2px;">↳ ' + abilityDesc + '</div>';
+
+    // Moves & Damage Effectiveness against Active Opponent
+    var foe = getOpponentActive();
+    var foeTypes = getOpponentTypes(foe);
+    var foeName = foe ? (foe.name || foe.species || 'Opponent').replace(/^p[12]:\\s*/i, '') : 'Opponent';
+
+    if (mon.moves && mon.moves.length) {
+      html += '<div style="margin-top:3px;border-top:1px solid #333;padding-top:2px;"><b>Moves vs ' + foeName + ' (' + (foeTypes.join('/') || '—') + '):</b></div>';
+      for (var i = 0; i < mon.moves.length; i++) {
+        var mName = mon.moves[i];
+        var mId = mName.toLowerCase().replace(/[^a-z0-9]/g, '');
+        var mData = (window.BattleMovedex && BattleMovedex[mId]) || (window.Dex && Dex.moves ? Dex.moves.get(mName) : null);
+        var mType = (mData && mData.type) || 'Normal';
+        var mCategory = (mData && mData.category) || '';
+        var mBp = (mData && (mData.basePower || '—')) || '—';
+        var mult = (mCategory === 'Status') ? 1 : getEffectiveness(mType, foeTypes);
+        var effBadge = (mCategory === 'Status') ? '<span class="eff-badge eff-neutral">Status</span>' : formatMultiplierBadge(mult);
+
+        html += '<div style="font-size:9px;margin:2px 0;">• <b>' + mName + '</b> <span style="color:#ffd700;">[' + mType + (mCategory ? ' ' + mCategory[0] : '') + ']</span> (BP: ' + mBp + ') ' + effBadge + '</div>';
+      }
+    }
+
+    html += renderDefensiveProfile(monTypes);
+
+    var titlePrefix = mon.active ? '🛡️ [Active] ' : '🔄 [Switch] ';
+    showInspector(titlePrefix + 'Slot ' + slot + ' (' + index + '/' + aliveTeam.length + '): ' + rawName, html, 'myteam', index, mon.active);
+  }
+
+  // 3 Menu: Quick In-Battle Controls Guide
+  function inspectGuide() {
+    var html = '';
+    html += '<div style="font-weight:bold;color:#00ffcc;margin-bottom:3px;">Keypad Controls:</div>';
+    html += '<div style="margin:2px 0;"><b>[0]</b> Move Selection HUD</div>';
+    html += '<div style="margin:2px 0;"><b>[1]</b> Opponent Roster (Alive Only)</div>';
+    html += '<div style="margin:2px 0;"><b>[2]</b> My Team & Switch (Alive Only)</div>';
+    html += '<div style="margin:2px 0;"><b>[3]</b> Controls Guide (This Menu)</div>';
+    html += '<div style="margin:2px 0;"><b>[9]</b> Battle Chat & Log Overlay</div>';
+    html += '<div style="margin:2px 0;"><b>[*]</b> Toggle Tera / Mega / Dynamax</div>';
+    html += '<div style="margin:2px 0;"><b>[#]</b> Cancel / Undo Move / Close Modal</div>';
+    html += '<div style="margin:2px 0;"><b>[CALL / OK]</b> Use Move / Confirm Switch</div>';
+    html += '<div style="border-top:1px solid #333;margin-top:4px;padding-top:3px;font-weight:bold;color:#00ffcc;">D-Pad Navigation:</div>';
+    html += '<div style="margin:2px 0;"><b>[◄ / ►]</b> Cycle Entries (Moves, Foe, Team)</div>';
+    html += '<div style="margin:2px 0;"><b>[▲ / ▼]</b> Scroll Modal Body</div>';
+    html += '<div style="margin:2px 0;"><b>[D-Pad]</b> Move Spatial Focus in Normal UI</div>';
+    showInspector('📖 Battle Controls Guide', html, 'guide', 1, false);
+  }
+
+  function patchShowdown() {
+    var chatElements = document.querySelectorAll('button[name="openChat"], button[name="openBattleLog"], button.battle-chat-toggle, .battle-chat-toggle, .chat-toggle');
+    for (var i = 0; i < chatElements.length; i++) {
+      chatElements[i].remove();
+    }
+
+    var tooltips = document.querySelectorAll('#tooltipwrapper, .tooltip, .tooltipwrapper, div[class*="tooltip"]');
+    for (var j = 0; j < tooltips.length; j++) {
+      tooltips[j].style.setProperty('display', 'none', 'important');
+    }
+
+    if (window.BattleTooltips) {
+      BattleTooltips.prototype.showTooltip = function() {};
+      BattleTooltips.prototype.showMoveTooltip = function() {};
+      BattleTooltips.prototype.showPokemonTooltip = function() {};
+      BattleTooltips.prototype.showCustomTooltip = function() {};
+      BattleTooltips.prototype.showPinnedTooltip = function() {};
+      BattleTooltips.prototype.hideTooltip = function() {};
+    }
+
+    if (window.app) {
+      app.showTooltip = function() {};
+      app.hideTooltip = function() {};
+      app.focusPrevRoom = function() {};
+      app.focusNextRoom = function() {};
+    }
+  }
+
+  setInterval(patchShowdown, 200);
+
+  function attemptConnect() {
+    try {
+      window.Config = window.Config || {};
+      Config.server = Config.defaultserver = {
+        id: 'showdown',
+        host: 'sim3.psim.us',
+        port: 443,
+        httpport: 8000,
+        altport: 80,
+        ssl: true
+      };
+      patchShowdown();
+      if (window.app && typeof app.connect === 'function') {
+        if (!app.connection) app.connect();
+        return true;
+      }
+    } catch (err) {}
+    return false;
+  }
+
+  var pollCount = 0;
+  var connectInterval = setInterval(function() {
+    pollCount++;
+    if (attemptConnect() || pollCount > 200) {
+      clearInterval(connectInterval);
+    }
+  }, 50);
+
+  window.addEventListener('load', function() {
+    setTimeout(attemptConnect, 100);
+  });
+})();
+</script>
+`;
+
+function sanitizeResponseHeaders(originalHeaders) {
+  const headers = new Headers(originalHeaders);
+  headers.delete("content-security-policy");
+  headers.delete("content-security-policy-report-only");
+  headers.delete("x-frame-options");
+  headers.delete("cross-origin-opener-policy");
+  headers.delete("cross-origin-embedder-policy");
+  headers.set("access-control-allow-origin", "*");
+  headers.set("access-control-allow-credentials", "true");
+  return headers;
+}
+
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    const publicHost = request.headers.get("host") || url.host;
+
+    // 1. Short-circuit ad and analytics networks
+    if (AD_TRACKER_PATTERN.test(url.pathname)) {
+      return new Response("// Ad/Analytics disabled by proxy", {
+        status: 200,
+        headers: {
+          "Content-Type": "application/javascript; charset=utf-8",
+          "Cache-Control": "public, max-age=86400",
+        },
+      });
+    }
+
+    // 2. Intercept /config/config.js
+    if (url.pathname === "/config/config.js") {
+      try {
+        const upstreamReq = new Request(`${TARGET_WEB}/config/config.js`, {
+          headers: {
+            "User-Agent": request.headers.get("user-agent") || "Mozilla/5.0",
+            Referer: `${TARGET_WEB}/`,
+            Origin: TARGET_WEB,
+          },
+        });
+        const resp = await fetch(upstreamReq);
+        let configText = await resp.text();
+
+        configText += `
+Config.server = Config.defaultserver = {
+  id: 'showdown',
+  host: 'sim3.psim.us',
+  port: 443,
+  httpport: 8000,
+  altport: 80,
+  ssl: true
+};
+Config.routes = Config.routes || {};
+Config.routes.client = ${JSON.stringify(publicHost)};
+`;
+
+        return new Response(configText, {
+          status: 200,
+          headers: {
+            "Content-Type": "application/javascript; charset=utf-8",
+            "Cache-Control": "no-store",
+            "Access-Control-Allow-Origin": "*",
+          },
+        });
+      } catch (err) {
+        return new Response(`// Config proxy error: ${err.message}`, {
+          status: 500,
+          headers: { "Content-Type": "application/javascript; charset=utf-8" },
+        });
+      }
+    }
+
+    // 3. Dispatch Target: Simulator (/showdown) or Web Client
+    const isSim = url.pathname.startsWith("/showdown");
+    const targetBase = isSim ? TARGET_SIM : TARGET_WEB;
+    const targetUrl = new URL(url.pathname + url.search, targetBase);
+
+    const forwardHeaders = new Headers(request.headers);
+    forwardHeaders.set("Host", targetUrl.host);
+    forwardHeaders.set("Origin", TARGET_WEB);
+    forwardHeaders.set("Referer", `${TARGET_WEB}/`);
+
+    const clientIp = request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for");
+    if (clientIp) {
+      forwardHeaders.set("x-forwarded-for", clientIp);
+      forwardHeaders.set("x-real-ip", clientIp.split(",")[0].trim());
+    }
+
+    const proxyRequest = new Request(targetUrl.toString(), {
+      method: request.method,
+      headers: forwardHeaders,
+      body: request.body,
+      redirect: "manual",
+    });
+
+    const response = await fetch(proxyRequest);
+
+    if (response.status === 101) {
+      return response;
+    }
+
+    const resHeaders = sanitizeResponseHeaders(response.headers);
+
+    const location = resHeaders.get("location");
+    if (location && publicHost) {
+      resHeaders.set(
+        "location",
+        location
+          .replace("https://play.pokemonshowdown.com", `https://${publicHost}`)
+          .replace("http://play.pokemonshowdown.com", `https://${publicHost}`)
+      );
+    }
+
+    const setCookie = resHeaders.get("set-cookie");
+    if (setCookie) {
+      resHeaders.set("set-cookie", setCookie.replace(/;\s*Domain=[^;]+/gi, ""));
+    }
+
+    const contentType = resHeaders.get("content-type") || "";
+
+    // 4. Inject HTML styles and scripts
+    if (contentType.includes("text/html")) {
+      let html = await response.text();
+
+      html = html
+        .split("//play.pokemonshowdown.com/config/config.js")
+        .join(`//${publicHost}/config/config.js`);
+
+      html = html.replace("<head>", `<head>${INJECTED_HEAD}`);
+      html = html.includes("</body>")
+        ? html.replace("</body>", `${INJECTED_BODY}</body>`)
+        : html + INJECTED_BODY;
+
+      resHeaders.delete("content-length");
+      resHeaders.delete("content-encoding");
+
+      return new Response(html, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: resHeaders,
+      });
+    }
+
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: resHeaders,
+    });
+  },
+};
